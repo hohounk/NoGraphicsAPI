@@ -366,7 +366,8 @@ if(NOT APPLE)
         NOGRAPHICSAPI_FAILURE_FRAGMENT="${continuation_fragment_spv}")
     add_test(NAME test_startup_failures COMMAND test_startup_failures)
     set_tests_properties(test_startup_failures PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
-    foreach(operation vkQueueSubmit2 vkWaitSemaphores vkGetQueryPoolResults vkDeviceWaitIdle)
+    # The present fence operations use the present case's surface and skip with it.
+    foreach(operation vkQueueSubmit2 vkWaitSemaphores vkGetQueryPoolResults vkDeviceWaitIdle vkWaitForFences vkGetFenceStatus)
         add_test(NAME test_startup_failures_device_lost_${operation} COMMAND test_startup_failures --device-lost ${operation})
         set_tests_properties(test_startup_failures_device_lost_${operation} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
             FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
