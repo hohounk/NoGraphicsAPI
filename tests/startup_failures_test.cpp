@@ -503,6 +503,11 @@ int device_lost_case(const char* operation) noexcept
     }
     uint64 timestamp = 0;
     gpu::write_timestamp(commands, &timestamp);
+    if (commands->timestamp_count == 0 && !strcmp(operation, "vkGetQueryPoolResults"))
+    {
+        printf("SKIP: the queue has no 64-bit timestamps.\n");
+        return 77;
+    }
     gpu::end_commands(commands);
     gpu::set_error_callback(receive_device_lost);
     arm_lost(operation, "vkQueueSubmit2");
