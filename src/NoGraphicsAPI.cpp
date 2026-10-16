@@ -1700,7 +1700,7 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
            "swapchain image count must fit the wrapper's presentation context array");
 #if !defined(_WIN32)
     if (presentation && !callback_surface)
-        return {.error = Error::unsupported};
+        return fail_device_creation(nullptr, Error::unsupported, "Presentation outside Windows requires a DeviceDesc::create_surface callback.");
 #endif
 
     uint32 loader_version = VK_API_VERSION_1_0;
