@@ -530,6 +530,13 @@ int main()
     gpu::DeviceInit init = gpu::create_device();
     check(!init.device && init.error == gpu::Error::out_of_memory, "instance allocation failure returns an error instead of terminating");
     reported("vkCreateInstance", {});
+#if !defined(_WIN32)
+    int window = 0;
+    arm(nullptr);
+    init = gpu::create_device({.window = &window});
+    check(!init.device && init.error == gpu::Error::unsupported && reports == 1 && !reported_fatal && strstr(diagnostic, "create_surface"),
+        "presentation without a create_surface callback reports why it is unsupported");
+#endif
     arm(nullptr);
     init = gpu::create_device({.timestamp_query_count = 8});
     if (init.error == gpu::Error::unsupported)
@@ -546,13 +553,6 @@ int main()
     init = gpu::create_device();
     check(!init.device && init.error == gpu::Error::out_of_memory, "logical device allocation failure returns an error");
     reported("vkCreateDevice", before_device);
-#if !defined(_WIN32)
-    int window = 0;
-    arm(nullptr);
-    init = gpu::create_device({.window = &window});
-    check(!init.device && init.error == gpu::Error::unsupported && reports == 1 && strstr(diagnostic, "create_surface"),
-        "presentation without a create_surface callback reports why it is unsupported");
-#endif
     heap_failures(device);
     texture_failures(device);
     command_failures(device);
