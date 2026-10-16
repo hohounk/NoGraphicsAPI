@@ -531,6 +531,13 @@ int main(int argc, char** argv)
     init = gpu::create_device();
     check(!init.device && init.error == gpu::Error::out_of_memory, "logical device allocation failure returns an error");
     reported("vkCreateDevice", before_device);
+#if !defined(_WIN32)
+    int window = 0;
+    arm(nullptr);
+    init = gpu::create_device({.window = &window});
+    check(!init.device && init.error == gpu::Error::unsupported && reports == 1 && strstr(diagnostic, "create_surface"),
+        "presentation without a create_surface callback reports why it is unsupported");
+#endif
     heap_failures(device);
     texture_failures(device);
     command_failures(device);
