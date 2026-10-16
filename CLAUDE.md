@@ -16,8 +16,7 @@ The upstream coding rules apply to every change here:
   1. `feat(wsi)`: the Linux WSI callbacks in `DeviceDesc`
      (`instance_extensions`, `instance_extension_count`, `create_surface`,
      `drawable_extent`, `wsi_user`) and the `surface_extent` helper for a
-     surface that reports the extent `0xFFFFFFFF`. This commit builds alone,
-     so it can go upstream as one change.
+     surface that reports the extent `0xFFFFFFFF`. This commit builds alone.
   2. `feat(validation)`: each validation message also reaches the error
      callback with the prefix `NoGraphicsAPI validation: `.
      `DeviceDesc::validation` (default true) turns the layer off.
@@ -62,3 +61,7 @@ Rebase `linux-wsi` on a newer upstream commit only as its own change. Run the
 gate after the rebase. Consumers take the result with a SHA bump.
 
 A `git push` to `origin` needs the owner's yes.
+
+Never open a pull request or an issue on `sebbbi/NoGraphicsAPI`, and never
+push to `upstream`. The fork does not contribute upstream unless the owner
+asks for it.
