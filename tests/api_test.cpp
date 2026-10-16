@@ -347,10 +347,11 @@ constexpr gpu::DeviceCaps default_caps{};
 static_assert(default_caps.queue_count == 0 && default_caps.general_queue_count == 0 && default_caps.compute_queue_count == 0 &&
               default_caps.copy_queue_count == 0 && default_caps.copy_texture_granularity.x == 1 &&
               default_caps.copy_texture_granularity.y == 1 && default_caps.copy_texture_granularity.z == 1);
-static_assert(default_caps.max_push_data_size == 0 &&
+static_assert(default_caps.device_name == nullptr && default_caps.max_push_data_size == 0 &&
               default_caps.texture_heap_alignment == 0 &&
               !default_caps.texture_compression_bc &&
-              !default_caps.texture_compression_astc && !default_caps.storage_input_output16 && !default_caps.indirect_mesh_draw);
+              !default_caps.texture_compression_astc && !default_caps.texture_compression_etc2 && !default_caps.storage_input_output16 &&
+              !default_caps.indirect_mesh_draw && !default_caps.unified_image_layouts && !default_caps.swapchain_maintenance1);
 constexpr gpu::DeviceInit default_device_init{};
 static_assert(default_device_init.device == nullptr &&
               default_device_init.error == gpu::Error::none);

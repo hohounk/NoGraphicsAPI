@@ -32,14 +32,20 @@ void print_line(const char* label, const char* format, ...)
 
 void print_bytes(const char* label, uint64 bytes)
 {
-    if (bytes > 1024ull * 1024ull * 1024ull)
+    if (bytes >= 1024ull * 1024ull * 1024ull)
         print_line(label, "%" PRIu64 " bytes (%.2f GiB)", bytes, static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0));
-    else if (bytes > 1024ull * 1024ull)
+    else if (bytes >= 1024ull * 1024ull)
         print_line(label, "%" PRIu64 " bytes (%.2f MiB)", bytes, static_cast<double>(bytes) / (1024.0 * 1024.0));
-    else if (bytes > 1024ull)
+    else if (bytes >= 1024ull)
         print_line(label, "%" PRIu64 " bytes (%.2f KiB)", bytes, static_cast<double>(bytes) / 1024.0);
     else
         print_line(label, "%" PRIu64 " bytes", bytes);
+}
+
+void print_api_version(uint32 api_version)
+{
+    print_line("Vulkan API", "0x%08" PRIx32 " (%" PRIu32 ".%" PRIu32 ".%" PRIu32 ")", api_version, (api_version >> 22u) & 0x7fu, (api_version >> 12u) & 0x3ffu,
+               api_version & 0xfffu);
 }
 
 int main()
@@ -61,14 +67,7 @@ int main()
     }
 
     const gpu::DeviceInfo& info = gpu::get_device_info(device_init.device);
-    print_line(
-        "Vulkan API",
-        "0x%08" PRIx32 " (%" PRIu32 ".%" PRIu32 ".%" PRIu32 ")",
-        info.api_version,
-        info.api_version >> 22u,
-        (info.api_version >> 12u) & 0x3ffu,
-        info.api_version & 0xfffu
-    );
+    print_api_version(info.api_version);
     print_line("device", "%s", info.device_name);
     print_line("vendor id", "0x%04" PRIx32, info.vendor_id);
     print_line("device id", "0x%04" PRIx32, info.device_id);

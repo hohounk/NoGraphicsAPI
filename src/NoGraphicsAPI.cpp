@@ -1500,6 +1500,7 @@ struct Candidate
     bool texture_compression_etc2 = false;
     bool storage_input_output16 = false;
     bool khr_swapchain_maintenance1 = false;
+    bool ext_swapchain_maintenance1 = false;
     VkPhysicalDeviceDescriptorHeapPropertiesEXT heap_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
     VkPhysicalDeviceVulkan12Properties vulkan12_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
     VkPhysicalDeviceDriverProperties driver_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
@@ -1608,6 +1609,7 @@ Error inspect_candidate(VkPhysicalDevice physical_device, VkSurfaceKHR surface, 
     result.texture_compression_etc2 = features.core.features.textureCompressionETC2 == VK_TRUE;
     result.storage_input_output16 = features.vulkan11.storageInputOutput16 == VK_TRUE;
     result.khr_swapchain_maintenance1 = khr_swapchain_maintenance1;
+    result.ext_swapchain_maintenance1 = ext_swapchain_maintenance1;
 
     uint32 available_queue_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &available_queue_count, nullptr);
@@ -2101,7 +2103,7 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
         .storage_input_output16 = selected.storage_input_output16,
         .indirect_mesh_draw = true,
         .unified_image_layouts = selected.unified_image_layouts,
-        .swapchain_maintenance1 = selected.khr_swapchain_maintenance1,
+        .swapchain_maintenance1 = selected.khr_swapchain_maintenance1 || selected.ext_swapchain_maintenance1,
     };
     if (presentation)
     {
