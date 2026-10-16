@@ -16,6 +16,8 @@ The upstream coding rules apply to every change here:
 | `device-lost` | Topic: lost-device reports from submit and the waits | New commits only, never rebased. |
 | `presentation-device-lost` | Topic: tests that need both `linux-wsi` and `device-lost`, such as a lost device at the present fences. Merges both topics in. | New commits and `--no-ff` merges of those two topics only, never rebased. |
 | `pr/16-device-diagnostics` | Topic: upstream PR #16, frozen at `a48f70e` | Moves only when the owner takes a newer PR head. |
+| `pr/16-fixes` | Topic: fixes to the PR #16 code (torus-fqx.5.8, torus-fqx.5.10). Starts from `pr/16-device-diagnostics`. | New commits and `--no-ff` merges of `pr/16-device-diagnostics` only, never rebased. |
+| `presentation-pr/16` | Topic: tests that need both `linux-wsi` and `pr/16-fixes`, such as presentation on a driver that exposes only `VK_EXT_swapchain_maintenance_1`. Merges both topics in. | New commits and `--no-ff` merges of those two topics only, never rebased. |
 | `integration` | **Every consumer pins a commit SHA of this branch** | `--no-ff` merges of `main` and the topics, plus `CLAUDE.md` commits. Never rebased. |
 
 ## Rules
@@ -41,7 +43,8 @@ The upstream coding rules apply to every change here:
   `--no-verify`. If the hook is missing, restore it from the notes of bead
   torus-fqx.5.11 in torus-engine.
 - A new topic starts from `main`, gets its own branch, and merges like the
-  others.
+  others. A topic that fixes code that only another topic holds starts from
+  that topic, as `pr/16-fixes` does.
 - A consumer that needs a change starts an agent-deck session here:
   `agent-deck launch ~/katsepolygon/forks/NoGraphicsAPI -t "<title>" -c claude --message "<the change>"`.
   The consumer then moves its pin to the new `integration` SHA.
