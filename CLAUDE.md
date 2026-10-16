@@ -15,7 +15,7 @@ The upstream coding rules apply to every change here:
 | `linux-wsi` | Topic: Linux WSI callbacks, validation forwarding | New commits only, never rebased. |
 | `device-lost` | Topic: lost-device reports from submit and the waits | New commits only, never rebased. |
 | `pr/16-device-diagnostics` | Topic: upstream PR #16, frozen at `a48f70e` | Moves only when the owner takes a newer PR head. |
-| `integration` | **The branch that every consumer pins** | `--no-ff` merges of `main` and the topics, plus `CLAUDE.md` commits. Never rebased. |
+| `integration` | **Every consumer pins a commit SHA of this branch** | `--no-ff` merges of `main` and the topics, plus `CLAUDE.md` commits. Never rebased. |
 
 ## Rules
 
@@ -23,18 +23,20 @@ The upstream coding rules apply to every change here:
   with no patch step. Never pin a branch name or a topic.
 - Make every NoGraphicsAPI change in this checkout. Never edit a FetchContent
   copy such as `.deps/` of a consumer.
-- A fix goes on its topic branch, in a worktree under `.worktrees/`, then the
-  topic merges into `integration` with `--no-ff`. The merge message records
-  each conflict resolution and the reason. Commit only `CLAUDE.md` on
-  `integration` directly. Check: this command prints nothing.
+- This checkout stays on `integration`.
+- A fix goes on its topic branch, in a worktree under `.worktrees/`. Then the
+  topic merges into `integration` with `--no-ff`, in this checkout. The merge
+  message records each conflict resolution and the reason. Commit only
+  `CLAUDE.md` on `integration` directly. Check: this command prints nothing.
 
   ```bash
   git log --first-parent --no-merges main..integration -- . ':!CLAUDE.md'
   ```
 
+  If it prints a commit, do not push. See "When a check fails".
+
 - A new topic starts from `main`, gets its own branch, and merges like the
   others.
-- This checkout stays on `integration`.
 - A consumer that needs a change starts an agent-deck session here:
   `agent-deck launch ~/katsepolygon/forks/NoGraphicsAPI -t "<title>" -c claude --message "<the change>"`.
   The consumer then moves its pin to the new `integration` SHA.
@@ -48,7 +50,7 @@ The upstream coding rules apply to every change here:
 ## Gate
 
 Run after each merge into `integration` and at every sync, from the root of
-the tree under test:
+this checkout:
 
 ```bash
 B=$(mktemp -d /tmp/nga-gate.XXXX)
@@ -68,15 +70,27 @@ tmp-rm "$B"
 The gate passes when `suite=0`, `release=0`, and the only `FAILED:` line
 names `example_window_win32.cpp.o`. The examples use a Win32 window on every
 platform except Apple, so on Linux only that file fails, and every other
-example source still compiles. A second `FAILED:` line fails the gate.
+example source still compiles. No `FAILED:` line at all also passes. Any
+other `FAILED:` line fails the gate.
 
 The Release run exists because `assert_vk` is a no-op under `NDEBUG`, and the
 first build has no `CMAKE_BUILD_TYPE`.
 
 The upstream test `test_command_context` fails sometimes ("Timestamp readback
 failed in batch 3"), also without the fork commits. If it is the only
-failure, run the gate one more time and record the failure. Do not fix it
-here.
+failure, run the gate one more time. Record the flake in the notes of the bd
+bead that drove the merge, or tell the owner when no bead exists. Do not fix
+it here.
+
+## When a check fails
+
+- A failed gate blocks the push. A second `test_command_context` failure in
+  a row counts as a failed gate. Fix the cause on its topic branch and merge
+  the topic again. Before a push, the owner may instead undo the merge.
+- A commit that the branch check prints belongs on a topic branch. Before a
+  push, ask the owner to move it there. After a push, `integration` keeps it,
+  because the branch is never rewritten. Tell the owner.
+- Never push past a failed check without the owner's yes.
 
 ## Upstream sync
 
