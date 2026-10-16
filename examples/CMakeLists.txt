@@ -22,6 +22,10 @@ endif()
 add_subdirectory(triangle)
 add_subdirectory(cube)
 add_subdirectory(deferred_renderer)
+if(NOT APPLE)
+    # get_device_info and get_device_memory_info exist only in the Vulkan backend.
+    add_subdirectory(device_info)
+endif()
 
 function(NoGraphicsAPI_make_release_gui target)
     if(WIN32)
