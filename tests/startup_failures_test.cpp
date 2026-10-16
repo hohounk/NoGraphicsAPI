@@ -133,6 +133,11 @@ TEST_RESULT(vkBindBufferMemory, (VkDevice device, VkBuffer buffer, VkDeviceMemor
 TEST_RESULT(vkBindImageMemory, (VkDevice device, VkImage image, VkDeviceMemory memory, VkDeviceSize offset), (device, image, memory, offset))
 TEST_RESULT(vkMapMemory, (VkDevice device, VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void** data),
     (device, memory, offset, size, flags, data))
+TEST_RESULT(vkQueueSubmit2, (VkQueue queue, uint32 count, const VkSubmitInfo2* submits, VkFence fence), (queue, count, submits, fence))
+TEST_RESULT(vkWaitSemaphores, (VkDevice device, const VkSemaphoreWaitInfo* info, uint64 timeout), (device, info, timeout))
+TEST_RESULT(vkGetQueryPoolResults, (VkDevice device, VkQueryPool pool, uint32 first, uint32 count, size_t size, void* data, VkDeviceSize stride,
+    VkQueryResultFlags flags), (device, pool, first, count, size, data, stride, flags))
+TEST_RESULT(vkDeviceWaitIdle, (VkDevice device), (device))
 TEST_DESTROY(vkDestroyInstance, (VkInstance instance, const VkAllocationCallbacks* allocator), (instance, allocator), instance, instances)
 TEST_DESTROY(vkDestroyDevice, (VkDevice device, const VkAllocationCallbacks* allocator), (device, allocator), device, devices)
 TEST_DESTROY(vkDestroyBuffer, (VkDevice device, VkBuffer buffer, const VkAllocationCallbacks* allocator), (device, buffer, allocator), buffer, buffers)
@@ -195,6 +200,10 @@ void VKAPI_CALL test_vkFreeCommandBuffers(VkDevice device, VkCommandPool pool, u
 #define vkFreeCommandBuffers test_vkFreeCommandBuffers
 #define vkDestroyQueryPool test_vkDestroyQueryPool
 #define vkDestroyPipeline test_vkDestroyPipeline
+#define vkQueueSubmit2 test_vkQueueSubmit2
+#define vkWaitSemaphores test_vkWaitSemaphores
+#define vkGetQueryPoolResults test_vkGetQueryPoolResults
+#define vkDeviceWaitIdle test_vkDeviceWaitIdle
 #include "../src/NoGraphicsAPI.cpp"
 
 namespace
@@ -513,6 +522,80 @@ void pipeline_failures(gpu::Device* device) noexcept
     unchanged(before);
 }
 
+const char* lost_operation = nullptr;
+
+void receive_device_lost(const char* message, bool fatal) noexcept
+{
+    if (!fatal) return;
+    if (strstr(message, lost_operation) && strstr(message, "VK_ERROR_DEVICE_LOST"))
+    {
+        printf("PASS: %s reports a lost device as fatal\n", lost_operation);
+        fflush(stdout);
+        _Exit(0);
+    }
+    fprintf(stderr, "FAIL: unexpected fatal report: %s\n", message);
+    fflush(stderr);
+    _Exit(1);
+}
+
+void arm_lost(const char* operation, const char* site) noexcept
+{
+    if (!strcmp(operation, site)) arm(site, VK_ERROR_DEVICE_LOST);
+}
+
+bool lost_without_stop(const char* operation, const char* site) noexcept
+{
+    if (strcmp(operation, site)) return false;
+    if (failure_operation)
+        fprintf(stderr, "FAIL: %s was never called\n", site);
+    else
+        fprintf(stderr, "FAIL: %s returned after a lost device without a fatal report\n", site);
+    return true;
+}
+
+int device_lost_case(const char* operation) noexcept
+{
+    const gpu::DeviceInit init = gpu::create_device({.timestamp_query_count = 8});
+    if (init.error == gpu::Error::unsupported)
+    {
+        printf("SKIP: required Vulkan device features are unavailable.\n");
+        return 77;
+    }
+    if (!init.device)
+    {
+        fprintf(stderr, "FAIL: device creation failed\n");
+        return 1;
+    }
+    gpu::Device* device = init.device;
+    gpu::TimelineSemaphore* timeline = gpu::create_timeline_semaphore(device);
+    gpu::CommandPool* pool = gpu::create_command_pool(device);
+    gpu::CommandBuffer* commands = timeline && pool ? gpu::begin_commands(pool) : nullptr;
+    if (!commands)
+    {
+        fprintf(stderr, "FAIL: device-lost fixture is unavailable\n");
+        return 1;
+    }
+    uint64 timestamp = 0;
+    gpu::write_timestamp(commands, &timestamp);
+    gpu::end_commands(commands);
+    lost_operation = operation;
+    gpu::set_error_callback(receive_device_lost);
+    arm_lost(operation, "vkQueueSubmit2");
+    gpu::submit(device, {.commands = {&commands, 1}, .completion = {.semaphore = timeline, .value = 1}});
+    if (lost_without_stop(operation, "vkQueueSubmit2")) return 1;
+    arm_lost(operation, "vkWaitSemaphores");
+    gpu::wait_timeline({.semaphore = timeline, .value = 1});
+    if (lost_without_stop(operation, "vkWaitSemaphores")) return 1;
+    arm_lost(operation, "vkGetQueryPoolResults");
+    gpu::read_timestamps(pool);
+    if (lost_without_stop(operation, "vkGetQueryPoolResults")) return 1;
+    arm_lost(operation, "vkDeviceWaitIdle");
+    gpu::wait_idle(device);
+    if (lost_without_stop(operation, "vkDeviceWaitIdle")) return 1;
+    fprintf(stderr, "FAIL: unknown device-lost operation %s\n", operation);
+    return 1;
+}
+
 #if defined(_WIN32)
 DWORD WINAPI callback_thread(void*) noexcept
 {
@@ -523,8 +606,9 @@ DWORD WINAPI callback_thread(void*) noexcept
 #endif
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 3 && !strcmp(argv[1], "--device-lost")) return device_lost_case(argv[2]);
     gpu::set_error_callback(receive_error);
     arm("vkCreateInstance", VK_ERROR_OUT_OF_HOST_MEMORY);
     gpu::DeviceInit init = gpu::create_device();
