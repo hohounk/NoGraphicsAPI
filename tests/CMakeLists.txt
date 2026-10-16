@@ -304,4 +304,20 @@ if(NOT APPLE)
         set_tests_properties(test_startup_failures_device_lost_${operation} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
             FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
     endforeach()
+    if(NOT WIN32)
+        # The present case falls back from a headless surface to an unmapped X11 window when libxcb is found.
+        find_path(NOGRAPHICSAPI_XCB_INCLUDE_DIR xcb/xcb.h)
+        find_library(NOGRAPHICSAPI_XCB_LIBRARY xcb)
+        if(NOGRAPHICSAPI_XCB_INCLUDE_DIR AND NOGRAPHICSAPI_XCB_LIBRARY)
+            target_include_directories(test_startup_failures PRIVATE ${NOGRAPHICSAPI_XCB_INCLUDE_DIR})
+            target_link_libraries(test_startup_failures PRIVATE ${NOGRAPHICSAPI_XCB_LIBRARY})
+            target_compile_definitions(test_startup_failures PRIVATE NOGRAPHICSAPI_TEST_XCB VK_USE_PLATFORM_XCB_KHR)
+        endif()
+        add_test(NAME test_startup_failures_present COMMAND test_startup_failures --present)
+        set_tests_properties(test_startup_failures_present PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+            FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
+    endif()
+    # The forwarded probe message prints the "NoGraphicsAPI validation:" prefix on purpose.
+    add_test(NAME test_startup_failures_validation_forwarding COMMAND test_startup_failures --validation-forwarding)
+    set_tests_properties(test_startup_failures_validation_forwarding PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error")
 endif()
