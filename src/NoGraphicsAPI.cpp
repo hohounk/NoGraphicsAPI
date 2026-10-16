@@ -194,6 +194,12 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
         fputs("NoGraphicsAPI validation: ", stderr);
         fputs(callback_data->pMessage, stderr);
         fputc('\n', stderr);
+        if (error_callback)
+        {
+            char message[2048];
+            snprintf(message, sizeof(message), "NoGraphicsAPI validation: %s", callback_data->pMessage);
+            error_callback(message, false);
+        }
     }
     return VK_FALSE;
 }
@@ -1741,8 +1747,8 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
     error = enumerate_instance_layers({layers, max_instance_layers}, layer_count);
     if (error != Error::none)
         return fail_device_creation(state, error);
-    const bool debug_utils_available = has_name({instance_extensions, instance_extension_count}, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-    const bool validation_available = has_name({layers, layer_count}, "VK_LAYER_KHRONOS_validation");
+    const bool debug_utils_available = desc.validation && has_name({instance_extensions, instance_extension_count}, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    const bool validation_available = desc.validation && has_name({layers, layer_count}, "VK_LAYER_KHRONOS_validation");
 #endif
 
     const char* enabled_instance_extensions[16]{};
