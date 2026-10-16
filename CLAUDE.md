@@ -1,0 +1,87 @@
+# NoGraphicsAPI fork of hohounk
+
+This checkout is the one shared home for every change to NoGraphicsAPI that a
+project of the owner needs.
+
+The upstream coding rules apply to every change here:
+
+@AGENTS.md
+
+## Branches
+
+| Branch | Role | Moves by |
+|---|---|---|
+| `main` | Mirror of `upstream/main` | Fast-forward only. No fork commits. |
+| `linux-wsi` | Topic: Linux WSI callbacks, validation forwarding | New commits only, never rebased. |
+| `device-lost` | Topic: lost-device reports from submit and the waits | New commits only, never rebased. |
+| `pr/16-device-diagnostics` | Topic: upstream PR #16, frozen at `a48f70e` | Moves only when the owner takes a newer PR head. |
+| `integration` | **The branch that every consumer pins** | `--no-ff` merges of `main` and the topics, plus `CLAUDE.md` commits. Never rebased. |
+
+## Rules
+
+- Consumers pin a commit SHA of `integration` through CMake FetchContent,
+  with no patch step. Never pin a branch name or a topic.
+- Make every NoGraphicsAPI change in this checkout. Never edit a FetchContent
+  copy such as `.deps/` of a consumer.
+- A fix goes on its topic branch, in a worktree under `.worktrees/`, then the
+  topic merges into `integration` with `--no-ff`. The merge message records
+  each conflict resolution and the reason. Commit only `CLAUDE.md` on
+  `integration` directly. Check: this command prints nothing.
+
+  ```bash
+  git log --first-parent --no-merges main..integration -- . ':!CLAUDE.md'
+  ```
+
+- A new topic starts from `main`, gets its own branch, and merges like the
+  others.
+- This checkout stays on `integration`.
+- A consumer that needs a change starts an agent-deck session here:
+  `agent-deck launch ~/katsepolygon/forks/NoGraphicsAPI -t "<title>" -c claude --message "<the change>"`.
+  The consumer then moves its pin to the new `integration` SHA.
+- A local build against this checkout uses
+  `-DFETCHCONTENT_SOURCE_DIR_NOGRAPHICSAPI=<this checkout>`. Remove the
+  override before a consumer records a pin.
+- Never open a pull request or an issue on `sebbbi/NoGraphicsAPI`, and never
+  push to `upstream`. The upstream push URL is `DISABLED` in this clone.
+- A `git push` to `origin` needs the owner's yes.
+
+## Gate
+
+Run after each merge into `integration` and at every sync, from the root of
+the tree under test:
+
+```bash
+B=$(mktemp -d /tmp/nga-gate.XXXX)
+F=(-G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ "-DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++ -lc++abi")
+cmake -S . -B "$B/suite" "${F[@]}" -DNOGRAPHICSAPI_BUILD_TESTS=ON -DNOGRAPHICSAPI_BUILD_EXAMPLES=OFF > "$B/suite.cfg" 2>&1 \
+  && cmake --build "$B/suite" > "$B/suite.build" 2>&1 \
+  && timeout -k 5 540 ctest --test-dir "$B/suite" --timeout 120 > "$B/suite.ctest" 2>&1; echo "suite=$?"
+cmake -S . -B "$B/rel" "${F[@]}" -DCMAKE_BUILD_TYPE=Release -DNOGRAPHICSAPI_BUILD_TESTS=ON -DNOGRAPHICSAPI_BUILD_EXAMPLES=OFF > "$B/rel.cfg" 2>&1 \
+  && cmake --build "$B/rel" --target test_startup_failures > "$B/rel.build" 2>&1 \
+  && timeout -k 5 300 ctest --test-dir "$B/rel" -R '^test_startup_failures' --timeout 120 > "$B/rel.ctest" 2>&1; echo "release=$?"
+cmake -S . -B "$B/ex" "${F[@]}" -DNOGRAPHICSAPI_BUILD_TESTS=OFF -DNOGRAPHICSAPI_BUILD_EXAMPLES=ON > "$B/ex.cfg" 2>&1
+cmake --build "$B/ex" -- -k 0 > "$B/ex.build" 2>&1; grep '^FAILED:' "$B/ex.build"
+grep -E 'tests passed|Failed|\*\*\*' "$B/suite.ctest" "$B/rel.ctest"
+tmp-rm "$B"
+```
+
+The gate passes when `suite=0`, `release=0`, and the only `FAILED:` line
+names `example_window_win32.cpp.o`. The examples use a Win32 window on every
+platform except Apple, so on Linux only that file fails, and every other
+example source still compiles. A second `FAILED:` line fails the gate.
+
+The Release run exists because `assert_vk` is a no-op under `NDEBUG`, and the
+first build has no `CMAKE_BUILD_TYPE`.
+
+The upstream test `test_command_context` fails sometimes ("Timestamp readback
+failed in batch 3"), also without the fork commits. If it is the only
+failure, run the gate one more time and record the failure. Do not fix it
+here.
+
+## Upstream sync
+
+1. `git fetch upstream`, then fast-forward `main` to `upstream/main`.
+2. Merge `main` into `integration` with `--no-ff`. Run the gate.
+3. Merge `main` into a topic only when a fix on that topic needs the new
+   upstream code.
+4. Consumers move their pin to the new `integration` SHA.
