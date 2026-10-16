@@ -2,6 +2,8 @@
 
 #include <NoGraphicsAPI/span.hpp>
 
+struct VkInstance_T;
+struct VkSurfaceKHR_T;
 namespace gpu
 {
 
@@ -469,6 +471,13 @@ struct DeviceDesc
     uint32 desired_compute_queue_count = 0;
     uint32 desired_copy_queue_count = 0;
     uint32 timestamp_query_count = 256; // Per command buffer; zero disables timestamps.
+    // Linux WSI: a non-null create_surface replaces window. The device enables instance_extensions, owns the returned
+    // surface, and asks drawable_extent when the surface has no fixed extent. Null callbacks keep the Win32 path.
+    const char* const* instance_extensions = nullptr;
+    uint32 instance_extension_count = 0;
+    VkSurfaceKHR_T* (*create_surface)(VkInstance_T* instance, void* user) = nullptr;
+    uint32x2 (*drawable_extent)(void* user) = nullptr;
+    void* wsi_user = nullptr;
 };
 
 struct DeviceInit
