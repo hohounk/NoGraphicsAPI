@@ -479,6 +479,7 @@ struct DeviceDesc
     VkSurfaceKHR_T* (*create_surface)(VkInstance_T* instance, void* user) = nullptr;
     uint32x2 (*drawable_extent)(void* user) = nullptr;
     void* wsi_user = nullptr;
+    bool validation = true; // Enables the validation layer when installed. Builds with NDEBUG have no validation.
 };
 
 struct DeviceInit
