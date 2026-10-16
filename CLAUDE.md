@@ -14,6 +14,7 @@ The upstream coding rules apply to every change here:
 | `main` | Mirror of `upstream/main` | Fast-forward only. No fork commits. |
 | `linux-wsi` | Topic: Linux WSI callbacks, validation forwarding | New commits only, never rebased. |
 | `device-lost` | Topic: lost-device reports from submit and the waits | New commits only, never rebased. |
+| `presentation-device-lost` | Topic: tests that need both `linux-wsi` and `device-lost`, such as a lost device at the present fences. Merges both topics in. | New commits and `--no-ff` merges of those two topics only, never rebased. |
 | `pr/16-device-diagnostics` | Topic: upstream PR #16, frozen at `a48f70e` | Moves only when the owner takes a newer PR head. |
 | `integration` | **Every consumer pins a commit SHA of this branch** | `--no-ff` merges of `main` and the topics, plus `CLAUDE.md` commits. Never rebased. |
 
