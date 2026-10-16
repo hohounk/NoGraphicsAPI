@@ -29,6 +29,8 @@ bool reported_fatal = false;
 char diagnostic[1024]{};
 uint32 instance_layers = 0;
 bool instance_debug_utils = false;
+bool hide_khr_swapchain_maintenance1 = false;
+uint32 hidden_extensions = 0;
 
 bool inject(const char* operation) noexcept
 {
@@ -115,6 +117,21 @@ VkResult VKAPI_CALL test_vkAllocateCommandBuffers(VkDevice device, const VkComma
     return result;
 }
 
+// Simulates a driver that exposes only VK_EXT_swapchain_maintenance_1.
+VkResult VKAPI_CALL test_vkEnumerateDeviceExtensionProperties(VkPhysicalDevice physical, const char* layer, uint32* count, VkExtensionProperties* values)
+{
+    const VkResult result = vkEnumerateDeviceExtensionProperties(physical, layer, count, values);
+    if (!hide_khr_swapchain_maintenance1 || !values || result != VK_SUCCESS) return result;
+    uint32 kept = 0;
+    for (uint32 index = 0; index < *count; ++index)
+    {
+        if (strcmp(values[index].extensionName, VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)) values[kept++] = values[index];
+        else ++hidden_extensions;
+    }
+    *count = kept;
+    return result;
+}
+
 void VKAPI_CALL test_vkFreeCommandBuffers(VkDevice device, VkCommandPool pool, uint32 count, const VkCommandBuffer* commands)
 {
     command_frees += count;
@@ -153,6 +170,7 @@ void VKAPI_CALL test_vkFreeCommandBuffers(VkDevice device, VkCommandPool pool, u
 #define vkFreeCommandBuffers test_vkFreeCommandBuffers
 #define vkDestroyQueryPool test_vkDestroyQueryPool
 #define vkDestroyPipeline test_vkDestroyPipeline
+#define vkEnumerateDeviceExtensionProperties test_vkEnumerateDeviceExtensionProperties
 #include "../src/NoGraphicsAPI.cpp"
 
 namespace
@@ -538,6 +556,7 @@ int present_frames(const char* const* extensions, VkSurfaceKHR_T* (*create_surfa
     check(extent.x == window.extent.x && extent.y == window.extent.y, "get_drawable_extent returns the window extent");
     check(fixed_extent ? window.extent_calls == 0 : window.extent_calls != 0, "drawable_extent is asked only when the surface has no fixed extent");
     check(reports == 0, "presentation reports no diagnostic");
+    check(gpu::get_device_caps(device).swapchain_maintenance1, "caps report swapchain_maintenance1 on a presentation device");
     gpu::wait_idle(device);
     gpu::destroy_timeline_semaphore(timeline);
     gpu::destroy_command_pool(pool);
@@ -579,6 +598,7 @@ int present_case() noexcept
         printf("SKIP: no GPU presents to a headless or X11 surface.\n");
         return 77;
     }
+    if (hide_khr_swapchain_maintenance1) check(hidden_extensions != 0, "the KHR swapchain_maintenance1 name is hidden from the device");
     printf("Linux presentation, %s surface: %u failures\n", surface, failures);
     return failures ? 1 : result;
 }
@@ -638,6 +658,11 @@ DWORD WINAPI callback_thread(void*) noexcept
 int main(int argc, char** argv)
 {
     if (argc == 2 && !strcmp(argv[1], "--present")) return present_case();
+    if (argc == 2 && !strcmp(argv[1], "--present-ext-swapchain-maintenance1"))
+    {
+        hide_khr_swapchain_maintenance1 = true;
+        return present_case();
+    }
     if (argc == 2 && !strcmp(argv[1], "--validation-forwarding")) return validation_forwarding_case();
     gpu::set_error_callback(receive_error);
     arm("vkCreateInstance", VK_ERROR_OUT_OF_HOST_MEMORY);
