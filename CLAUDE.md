@@ -36,6 +36,10 @@ The upstream coding rules apply to every change here:
 
   If it prints a commit, do not push. See "When a check fails".
 
+- The unversioned hook `.git/hooks/pre-commit` rejects a commit with staged
+  conflict markers. It covers every worktree. Do not bypass it with
+  `--no-verify`. If the hook is missing, restore it from the notes of bead
+  torus-fqx.5.11 in torus-engine.
 - A new topic starts from `main`, gets its own branch, and merges like the
   others.
 - A consumer that needs a change starts an agent-deck session here:
