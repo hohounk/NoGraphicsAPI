@@ -70,8 +70,9 @@ tmp-rm "$B"
 The gate passes when `suite=0`, `release=0`, and the only `FAILED:` line
 names `example_window_win32.cpp.o`. The examples use a Win32 window on every
 platform except Apple, so on Linux only that file fails, and every other
-example source still compiles. No `FAILED:` line at all also passes. Any
-other `FAILED:` line fails the gate.
+example source still compiles. Any other `FAILED:` line fails the gate. On
+Linux a missing `FAILED:` line also fails the gate: it means that the
+examples step did not build at all.
 
 The Release run exists because `assert_vk` is a no-op under `NDEBUG`, and the
 first build has no `CMAKE_BUILD_TYPE`.
@@ -89,7 +90,9 @@ it here.
   the topic again. Before a push, the owner may instead undo the merge.
 - A commit that the branch check prints belongs on a topic branch. Before a
   push, ask the owner to move it there. After a push, `integration` keeps it,
-  because the branch is never rewritten. Tell the owner.
+  because the branch is never rewritten. Tell the owner. When the owner
+  accepts it, record its SHA in this file, and from then on run the check
+  with that SHA in place of `main`.
 - Never push past a failed check without the owner's yes.
 
 ## Upstream sync
