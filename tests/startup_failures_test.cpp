@@ -12,6 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(NOGRAPHICSAPI_TEST_XCB)
+#include <unistd.h>
+#endif
 
 namespace
 {
@@ -92,6 +95,9 @@ TEST_CREATE(vkCreateGraphicsPipelines, (VkDevice device, VkPipelineCache cache, 
     const VkAllocationCallbacks* allocator, VkPipeline* pipelines), (device, cache, count, info, allocator, pipelines), pipelines)
 TEST_RESULT(vkBindBufferMemory, (VkDevice device, VkBuffer buffer, VkDeviceMemory memory, VkDeviceSize offset), (device, buffer, memory, offset))
 TEST_RESULT(vkBindImageMemory, (VkDevice device, VkImage image, VkDeviceMemory memory, VkDeviceSize offset), (device, image, memory, offset))
+TEST_RESULT(vkWaitForFences, (VkDevice device, uint32 count, const VkFence* fences, VkBool32 wait_all, uint64 timeout),
+    (device, count, fences, wait_all, timeout))
+TEST_RESULT(vkGetFenceStatus, (VkDevice device, VkFence fence), (device, fence))
 TEST_RESULT(vkMapMemory, (VkDevice device, VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void** data),
     (device, memory, offset, size, flags, data))
 TEST_RESULT(vkQueueSubmit2, (VkQueue queue, uint32 count, const VkSubmitInfo2* submits, VkFence fence), (queue, count, submits, fence))
@@ -138,6 +144,8 @@ void VKAPI_CALL test_vkFreeCommandBuffers(VkDevice device, VkCommandPool pool, u
 #define vkAllocateMemory test_vkAllocateMemory
 #define vkBindBufferMemory test_vkBindBufferMemory
 #define vkMapMemory test_vkMapMemory
+#define vkWaitForFences test_vkWaitForFences
+#define vkGetFenceStatus test_vkGetFenceStatus
 #define vkCreateSemaphore test_vkCreateSemaphore
 #define vkCreateImage test_vkCreateImage
 #define vkBindImageMemory test_vkBindImageMemory
@@ -467,8 +475,12 @@ bool lost_without_stop(const char* operation, const char* site) noexcept
     return true;
 }
 
+int present_case() noexcept;
+
 int device_lost_case(const char* operation) noexcept
 {
+    lost_operation = operation;
+    if (!strcmp(operation, "vkWaitForFences") || !strcmp(operation, "vkGetFenceStatus")) return present_case();
     const gpu::DeviceInit init = gpu::create_device({.timestamp_query_count = 8});
     if (init.error == gpu::Error::unsupported)
     {
@@ -492,7 +504,6 @@ int device_lost_case(const char* operation) noexcept
     uint64 timestamp = 0;
     gpu::write_timestamp(commands, &timestamp);
     gpu::end_commands(commands);
-    lost_operation = operation;
     gpu::set_error_callback(receive_device_lost);
     arm_lost(operation, "vkQueueSubmit2");
     gpu::submit(device, {.commands = {&commands, 1}, .completion = {.semaphore = timeline, .value = 1}});
@@ -589,6 +600,53 @@ void validation_disabled() noexcept
     unchanged(before);
 }
 
+// get_drawable_extent marks the swapchain for recreation once it sees the new extent.
+bool resize(gpu::Device* device, TestWindow& window, gpu::uint32x2 extent) noexcept
+{
+    window.extent = extent;
+#if defined(NOGRAPHICSAPI_TEST_XCB)
+    if (window.connection)
+    {
+        const uint32 values[]{extent.x, extent.y};
+        xcb_configure_window(window.connection, window.window, XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
+        xcb_flush(window.connection);
+        // The driver sees an X11 resize some time after the server applies it.
+        for (uint32 attempt = 0; attempt < 10000; ++attempt)
+        {
+            const gpu::uint32x2 current = gpu::get_drawable_extent(device);
+            if (current.x == extent.x && current.y == extent.y) return true;
+            usleep(100);
+        }
+        return false;
+    }
+#endif
+    const gpu::uint32x2 current = gpu::get_drawable_extent(device);
+    return current.x == extent.x && current.y == extent.y;
+}
+
+// A present fence stays pending until swapchain recreation polls it or wait_idle waits for it.
+int lose_present_fence(gpu::Device* device, gpu::CommandPool* pool, TestWindow& window) noexcept
+{
+    gpu::set_error_callback(receive_device_lost);
+    arm_lost(lost_operation, "vkGetFenceStatus");
+    if (!strcmp(lost_operation, "vkGetFenceStatus"))
+    {
+        if (!resize(device, window, {.x = window.extent.x + 16, .y = window.extent.y + 16}))
+        {
+            fprintf(stderr, "FAIL: the drawable extent did not follow the window resize\n");
+            return 1;
+        }
+        gpu::reset_command_pool(pool);
+        (void)gpu::acquire(gpu::begin_commands(pool));
+    }
+    if (lost_without_stop(lost_operation, "vkGetFenceStatus")) return 1;
+    arm_lost(lost_operation, "vkWaitForFences");
+    gpu::wait_idle(device);
+    if (lost_without_stop(lost_operation, "vkWaitForFences")) return 1;
+    fprintf(stderr, "FAIL: unknown present device-lost operation %s\n", lost_operation);
+    return 1;
+}
+
 // Returns 77 when no GPU presents to the surface.
 int present_frames(const char* const* extensions, VkSurfaceKHR_T* (*create_surface)(VkInstance_T*, void*), TestWindow& window, bool fixed_extent) noexcept
 {
@@ -616,6 +674,7 @@ int present_frames(const char* const* extensions, VkSurfaceKHR_T* (*create_surfa
         else
             gpu::submit(device, {.commands = {&commands, 1}, .completion = {.semaphore = timeline, .value = frame}});
         gpu::wait_timeline({.semaphore = timeline, .value = frame});
+        if (lost_operation && acquired.render_view) return lose_present_fence(device, pool, window);
     }
     const gpu::uint32x2 extent = gpu::get_drawable_extent(device);
     check(extent.x == window.extent.x && extent.y == window.extent.y, "get_drawable_extent returns the window extent");
@@ -656,7 +715,7 @@ int present_case() noexcept
     }
 #endif
     gpu::set_error_callback(nullptr);
-    unchanged({});
+    if (!lost_operation) unchanged({});
     if (result == 77)
     {
         printf("SKIP: no GPU presents to a headless or X11 surface.\n");
