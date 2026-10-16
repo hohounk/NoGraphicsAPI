@@ -32,6 +32,8 @@ uint32 command_allocations = 0, command_frees = 0;
 uint32 failures = 0, reports = 0;
 bool reported_fatal = false;
 char diagnostic[2048]{};
+uint32 instance_layers = 0;
+bool instance_debug_utils = false;
 
 VkResult enumerate_extensions(gpu::Span<const char* const> names, uint32* count, VkExtensionProperties* values) noexcept
 {
@@ -107,8 +109,18 @@ bool inject(const char* operation) noexcept
         return inject(#name) ? failure_result : name arguments; \
     }
 
-TEST_CREATE(vkCreateInstance, (const VkInstanceCreateInfo* info, const VkAllocationCallbacks* allocator, VkInstance* instance),
-    (info, allocator, instance), instances)
+VkResult VKAPI_CALL test_vkCreateInstance(const VkInstanceCreateInfo* info, const VkAllocationCallbacks* allocator, VkInstance* instance)
+{
+    instance_layers = info->enabledLayerCount;
+    instance_debug_utils = false;
+    for (uint32 index = 0; index < info->enabledExtensionCount; ++index)
+        instance_debug_utils |= !strcmp(info->ppEnabledExtensionNames[index], VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    if (inject("vkCreateInstance")) return failure_result;
+    const VkResult result = vkCreateInstance(info, allocator, instance);
+    if (result == VK_SUCCESS) ++live.instances;
+    return result;
+}
+
 TEST_CREATE(vkCreateDevice, (VkPhysicalDevice physical, const VkDeviceCreateInfo* info, const VkAllocationCallbacks* allocator, VkDevice* device),
     (physical, info, allocator, device), devices)
 TEST_CREATE(vkCreateBuffer, (VkDevice device, const VkBufferCreateInfo* info, const VkAllocationCallbacks* allocator, VkBuffer* buffer),
@@ -513,6 +525,204 @@ void pipeline_failures(gpu::Device* device) noexcept
     unchanged(before);
 }
 
+const char* const headless_extensions[]{VK_KHR_SURFACE_EXTENSION_NAME, VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME};
+#if defined(NOGRAPHICSAPI_TEST_XCB)
+const char* const xcb_extensions[]{VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_XCB_SURFACE_EXTENSION_NAME};
+#endif
+
+// A headless surface has no fixed extent and asks drawable_extent. An X11 window has a fixed extent.
+struct TestWindow
+{
+    gpu::uint32x2 extent;
+    uint32 surface_calls, extent_calls;
+#if defined(NOGRAPHICSAPI_TEST_XCB)
+    xcb_connection_t* connection;
+    xcb_window_t window;
+#endif
+};
+
+bool instance_extension_available(const char* name) noexcept
+{
+    VkExtensionProperties extensions[gpu::max_instance_extensions]{};
+    uint32 count = gpu::max_instance_extensions;
+    vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions);
+    return gpu::has_name({extensions, count}, name);
+}
+
+VkSurfaceKHR_T* create_headless_surface(VkInstance_T* instance, void* user) noexcept
+{
+    const PFN_vkCreateHeadlessSurfaceEXT create = gpu::load_instance_proc<PFN_vkCreateHeadlessSurfaceEXT>(instance, "vkCreateHeadlessSurfaceEXT");
+    const VkHeadlessSurfaceCreateInfoEXT info{.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT};
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    ++static_cast<TestWindow*>(user)->surface_calls;
+    return create && create(instance, &info, nullptr, &surface) == VK_SUCCESS ? surface : VK_NULL_HANDLE;
+}
+
+#if defined(NOGRAPHICSAPI_TEST_XCB)
+VkSurfaceKHR_T* create_xcb_surface(VkInstance_T* instance, void* user) noexcept
+{
+    TestWindow& window = *static_cast<TestWindow*>(user);
+    const PFN_vkCreateXcbSurfaceKHR create = gpu::load_instance_proc<PFN_vkCreateXcbSurfaceKHR>(instance, "vkCreateXcbSurfaceKHR");
+    const VkXcbSurfaceCreateInfoKHR info{.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR, .connection = window.connection, .window = window.window};
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    ++window.surface_calls;
+    return create && create(instance, &info, nullptr, &surface) == VK_SUCCESS ? surface : VK_NULL_HANDLE;
+}
+#endif
+
+VkSurfaceKHR_T* create_no_surface(VkInstance_T*, void*) noexcept
+{
+    return VK_NULL_HANDLE;
+}
+
+gpu::uint32x2 test_window_extent(void* user) noexcept
+{
+    TestWindow& window = *static_cast<TestWindow*>(user);
+    ++window.extent_calls;
+    return window.extent;
+}
+
+void wsi_failures() noexcept
+{
+    const NativeResources before = live;
+    arm(nullptr);
+    const gpu::DeviceInit init = gpu::create_device({.create_surface = create_no_surface});
+    check(!init.device && init.error == gpu::Error::unsupported && reports == 1 && !reported_fatal && strstr(diagnostic, "returned no Vulkan surface"),
+        "a create_surface callback without a surface reports why presentation is unsupported");
+    unchanged(before);
+}
+
+void validation_disabled() noexcept
+{
+    const NativeResources before = live;
+    arm(nullptr);
+    const gpu::DeviceInit init = gpu::create_device({.validation = false});
+    check(init.device != nullptr, "device creation without validation succeeds");
+    if (!init.device) return;
+    check(!instance_layers && !instance_debug_utils && !init.device->debug_messenger, "validation = false enables no layer and no messenger");
+    gpu::destroy_device(init.device);
+    unchanged(before);
+}
+
+// Returns 77 when no GPU presents to the surface.
+int present_frames(const char* const* extensions, VkSurfaceKHR_T* (*create_surface)(VkInstance_T*, void*), TestWindow& window, bool fixed_extent) noexcept
+{
+    window.surface_calls = window.extent_calls = 0;
+    arm(nullptr);
+    const gpu::DeviceInit init = gpu::create_device({.swapchain_format = gpu::Format::bgra8_srgb, .instance_extensions = extensions,
+        .instance_extension_count = 2, .create_surface = create_surface, .drawable_extent = test_window_extent, .wsi_user = &window});
+    if (init.error == gpu::Error::unsupported && !strstr(diagnostic, "create_surface")) return 77;
+    check(init.device && window.surface_calls == 1, "device creation calls create_surface once with wsi_user and succeeds");
+    if (!init.device) return 1;
+    gpu::Device* device = init.device;
+    gpu::CommandPool* pool = gpu::create_command_pool(device);
+    gpu::TimelineSemaphore* timeline = gpu::create_timeline_semaphore(device);
+    check(pool && timeline, "presentation fixture is available");
+    for (uint64 frame = 1; pool && timeline && frame <= 3; ++frame)
+    {
+        gpu::reset_command_pool(pool);
+        gpu::CommandBuffer* commands = gpu::begin_commands(pool);
+        const gpu::SwapchainFrame acquired = gpu::acquire(commands);
+        check(acquired.render_view && acquired.extent.x == window.extent.x && acquired.extent.y == window.extent.y,
+            "acquire returns an image of the window extent");
+        gpu::end_commands(commands);
+        if (acquired.render_view)
+            gpu::submit_and_present(device, {.commands = {&commands, 1}, .completion = {.semaphore = timeline, .value = frame}});
+        else
+            gpu::submit(device, {.commands = {&commands, 1}, .completion = {.semaphore = timeline, .value = frame}});
+        gpu::wait_timeline({.semaphore = timeline, .value = frame});
+    }
+    const gpu::uint32x2 extent = gpu::get_drawable_extent(device);
+    check(extent.x == window.extent.x && extent.y == window.extent.y, "get_drawable_extent returns the window extent");
+    check(fixed_extent ? window.extent_calls == 0 : window.extent_calls != 0, "drawable_extent is asked only when the surface has no fixed extent");
+    check(reports == 0, "presentation reports no diagnostic");
+    gpu::wait_idle(device);
+    gpu::destroy_timeline_semaphore(timeline);
+    gpu::destroy_command_pool(pool);
+    gpu::destroy_device(device);
+    return failures ? 1 : 0;
+}
+
+int present_case() noexcept
+{
+    gpu::set_error_callback(receive_error);
+    TestWindow window{.extent = {.x = 64, .y = 48}};
+    const char* surface = "headless";
+    int result = 77;
+    if (instance_extension_available(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME))
+        result = present_frames(headless_extensions, create_headless_surface, window, false);
+#if defined(NOGRAPHICSAPI_TEST_XCB)
+    if (result == 77 && instance_extension_available(VK_KHR_XCB_SURFACE_EXTENSION_NAME))
+    {
+        printf("Headless presentation is unavailable; trying an X11 window.\n");
+        surface = "X11";
+        window.connection = xcb_connect(nullptr, nullptr);
+        if (!xcb_connection_has_error(window.connection))
+        {
+            const xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(window.connection)).data;
+            window.window = xcb_generate_id(window.connection);
+            xcb_create_window(window.connection, XCB_COPY_FROM_PARENT, window.window, screen->root, 0, 0, uint16(window.extent.x), uint16(window.extent.y), 0,
+                XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, 0, nullptr);
+            xcb_flush(window.connection);
+            result = present_frames(xcb_extensions, create_xcb_surface, window, true);
+            xcb_destroy_window(window.connection, window.window);
+        }
+        xcb_disconnect(window.connection);
+    }
+#endif
+    gpu::set_error_callback(nullptr);
+    unchanged({});
+    if (result == 77)
+    {
+        printf("SKIP: no GPU presents to a headless or X11 surface.\n");
+        return 77;
+    }
+    printf("Linux presentation, %s surface: %u failures\n", surface, failures);
+    return failures ? 1 : result;
+}
+
+int validation_forwarding_case() noexcept
+{
+#if defined(NDEBUG)
+    printf("SKIP: builds with NDEBUG have no validation.\n");
+    return 77;
+#else
+    gpu::set_error_callback(receive_error);
+    const gpu::DeviceInit init = gpu::create_device();
+    if (init.error == gpu::Error::unsupported)
+    {
+        printf("SKIP: required Vulkan device features are unavailable.\n");
+        return 77;
+    }
+    if (!init.device) return 1;
+    gpu::Device* device = init.device;
+    if (!device->debug_messenger)
+    {
+        printf("SKIP: VK_EXT_debug_utils is unavailable.\n");
+        gpu::destroy_device(device);
+        return 77;
+    }
+    const PFN_vkSubmitDebugUtilsMessageEXT submit_message =
+        gpu::load_instance_proc<PFN_vkSubmitDebugUtilsMessageEXT>(device->instance, "vkSubmitDebugUtilsMessageEXT");
+    check(submit_message != nullptr, "vkSubmitDebugUtilsMessageEXT is available with VK_EXT_debug_utils");
+    if (submit_message)
+    {
+        const VkDebugUtilsMessengerCallbackDataEXT info{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CALLBACK_DATA_EXT, .pMessage = "info probe"};
+        const VkDebugUtilsMessengerCallbackDataEXT warning{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CALLBACK_DATA_EXT, .pMessage = "warning probe"};
+        arm(nullptr);
+        submit_message(device->instance, VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT, VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT, &info);
+        check(reports == 0, "messages below warning severity are not forwarded");
+        submit_message(device->instance, VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT, &warning);
+        check(reports == 1 && !reported_fatal && !strcmp(diagnostic, "NoGraphicsAPI validation: warning probe"),
+            "a validation warning reaches the error callback as nonfatal");
+    }
+    gpu::destroy_device(device);
+    gpu::set_error_callback(nullptr);
+    printf("Validation forwarding: %u failures\n", failures);
+    return failures ? 1 : 0;
+#endif
+}
+
 #if defined(_WIN32)
 DWORD WINAPI callback_thread(void*) noexcept
 {
@@ -523,8 +733,10 @@ DWORD WINAPI callback_thread(void*) noexcept
 #endif
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--present")) return present_case();
+    if (argc == 2 && !strcmp(argv[1], "--validation-forwarding")) return validation_forwarding_case();
     gpu::set_error_callback(receive_error);
     arm("vkCreateInstance", VK_ERROR_OUT_OF_HOST_MEMORY);
     gpu::DeviceInit init = gpu::create_device();
@@ -537,6 +749,8 @@ int main()
     check(!init.device && init.error == gpu::Error::unsupported && reports == 1 && !reported_fatal && strstr(diagnostic, "create_surface"),
         "presentation without a create_surface callback reports why it is unsupported");
 #endif
+    wsi_failures();
+    validation_disabled();
     arm(nullptr);
     init = gpu::create_device({.timestamp_query_count = 8});
     if (init.error == gpu::Error::unsupported)
