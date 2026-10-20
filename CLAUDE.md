@@ -110,3 +110,27 @@ it here.
 3. Merge `main` into a topic only when a fix on that topic needs the new
    upstream code.
 4. Consumers move their pin to the new `integration` SHA.
+
+## Issue tracking
+
+This project uses **bd** (beads). The database is `nga` on the shared Dolt
+server (`bd dolt show`). `git config --local beads.role maintainer` is set in
+this clone. Without that role, bd sends new beads to `~/.beads-planning`.
+
+Issues live in that database. `.beads/` is local to this clone
+(`.git/info/exclude`), so it never reaches a pull request. `.beads/issues.jsonl`
+is a passive export, not the source of truth.
+
+`bd dolt show` lists remotes. The list is empty: this repo has no beads sync,
+and `bd dolt push` fails. Do not point `sync.remote` at `origin`. That remote
+is the public fork.
+
+## Bead epics
+File every new bead except a top-level epic under one of these (`bd create --parent`), or under one of their sub-epics (`bd children <epic>`).
+If nothing fits, use the triage epic, `bd config get custom.filing.triage-epic`. A child inherits the `theme:` label on create.
+
+| id | theme | label |
+|----|-------|-------|
+| nga-col | Triage — unclassified, needs placing | theme:triage |
+
+The rules are in `~/.claude/CLAUDE.md` under `## Filing Beads`. An orphan lands in triage through the `on_create` hook, and the daily `beads-hygiene` sweep reports what the hook missed.
