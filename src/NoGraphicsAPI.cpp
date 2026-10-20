@@ -1770,8 +1770,8 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
             if (!has_name({instance_extensions, instance_extension_count}, name))
                 missing_extensions[missing_extension_count++] = name;
         }
-        if (!callback_surface && !has_name({instance_extensions, instance_extension_count}, VK_KHR_WIN32_SURFACE_EXTENSION_NAME))
-            missing_extensions[missing_extension_count++] = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+        if (!callback_surface && !has_name({instance_extensions, instance_extension_count}, "VK_KHR_win32_surface"))
+            missing_extensions[missing_extension_count++] = "VK_KHR_win32_surface";
         if (!khr_surface_maintenance1 && !ext_surface_maintenance1)
             missing_extensions[missing_extension_count++] = "VK_KHR_surface_maintenance1 or VK_EXT_surface_maintenance1";
         if (desc.swapchain_color_space != ColorSpace::srgb && !state->swapchain_color_space_enabled)
