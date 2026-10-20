@@ -33,7 +33,7 @@ int main()
                             if (!valid_axis(tile.x, width, granularity.x) || !valid_axis(tile.y, height, granularity.y) ||
                                 !valid_axis(tile.z, depth, granularity.z) || uint64(tile.x) * tile.y * tile.z * bytes > capacity)
                             {
-                                fprintf(stderr, "Invalid upload tile for %u x %u x %u blocks at %llu bytes.\n", width, height, depth, capacity);
+                                fprintf(stderr, "Invalid upload tile for %u x %u x %u blocks at %llu bytes.\n", width, height, depth, (unsigned long long)capacity);
                                 return 1;
                             }
                             ++cases;

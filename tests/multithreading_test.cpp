@@ -268,7 +268,7 @@ bool test_parallel_recording(gpu::Device* device) noexcept
             {
                 if ((0x12340000u + contexts[index].index * 0x1000u + word) == reinterpret_cast<uint32*>(contexts[index].readback.range.cpu)[word])
                     continue;
-                fprintf(stderr, "Worker %u texture %llu word %u: expected %08x, received %08x.\n", index, word * sizeof(uint32) / texture_bytes,
+                fprintf(stderr, "Worker %u texture %llu word %u: expected %08x, received %08x.\n", index, (unsigned long long)(word * sizeof(uint32) / texture_bytes),
                         word, (0x12340000u + contexts[index].index * 0x1000u + word),
                         reinterpret_cast<uint32*>(contexts[index].readback.range.cpu)[word]);
                 fprintf(stderr, "Readback words 0=%08x 64=%08x last=%08x.\n", reinterpret_cast<uint32*>(contexts[index].readback.range.cpu)[0],
