@@ -36,7 +36,9 @@ thread_local ErrorCallback error_callback = nullptr;
 
 constexpr uint32 max_device_extensions = 512;
 constexpr uint32 max_instance_extensions = 256;
+#if !defined(NDEBUG)
 constexpr uint32 max_instance_layers = 64;
+#endif
 constexpr uint32 max_physical_devices = 32;
 constexpr uint32 max_queue_families = 64;
 constexpr uint32 queue_type_count = 3; // General, compute-only, copy-only.
@@ -355,7 +357,7 @@ constexpr uint32 known_texture_usage_bits =
     static_cast<uint32>(TextureUsage::transfer_source) |
     static_cast<uint32>(TextureUsage::transfer_destination);
 
-bool has_valid_texture_usage_bits(TextureUsage usage) noexcept
+[[maybe_unused]] bool has_valid_texture_usage_bits(TextureUsage usage) noexcept
 {
     const uint32 bits = static_cast<uint32>(usage);
     return bits != 0 && (bits & ~known_texture_usage_bits) == 0;
