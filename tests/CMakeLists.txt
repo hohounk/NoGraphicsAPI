@@ -55,6 +55,17 @@ NoGraphicsAPI_disable_exceptions(test_api)
 target_link_libraries(test_api PRIVATE NoGraphicsAPI::NoGraphicsAPI)
 add_test(NAME test_api COMMAND test_api)
 
+add_executable(test_device_info device_info_test.cpp)
+NoGraphicsAPI_disable_exceptions(test_device_info)
+target_link_libraries(test_device_info PRIVATE NoGraphicsAPI::NoGraphicsAPI)
+add_test(NAME test_device_info COMMAND test_device_info)
+set_tests_properties(test_device_info PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
+
+add_executable(test_device_info_format device_info_format_test.cpp)
+NoGraphicsAPI_disable_exceptions(test_device_info_format)
+target_link_libraries(test_device_info_format PRIVATE NoGraphicsAPI::NoGraphicsAPI)
+add_test(NAME test_device_info_format COMMAND test_device_info_format ${CMAKE_CURRENT_BINARY_DIR}/device_info_format.txt)
+
 add_executable(test_command_context command_context_test.cpp)
 NoGraphicsAPI_disable_exceptions(test_command_context)
 target_link_libraries(test_command_context PRIVATE NoGraphicsAPI::NoGraphicsAPI)

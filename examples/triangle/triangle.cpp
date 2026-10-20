@@ -20,7 +20,7 @@ int main()
         return 1;
     }
 
-    printf("Using %s\n", get_device_caps(device).device_name);
+    printf("Using %s\n", get_device_info(device).device_name);
 
     const Span<byte> vertex_code = read_shader(NOGRAPHICSAPI_VERTEX_SHADER_PATH);
     const Span<byte> fragment_code = read_shader(NOGRAPHICSAPI_FRAGMENT_SHADER_PATH);
