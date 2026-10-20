@@ -1661,7 +1661,7 @@ Error inspect_candidate(VkPhysicalDevice physical_device, VkSurfaceKHR surface, 
             type = 1;
         }
         else if ((flags & VK_QUEUE_TRANSFER_BIT) &&
-                 !(flags & ~(VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT | VK_QUEUE_PROTECTED_BIT)))
+                 !(flags & (VkQueueFlags)~(VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT | VK_QUEUE_PROTECTED_BIT)))
         {
             type = 2;
         }
