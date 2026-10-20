@@ -59,6 +59,7 @@ int main()
         case gpu::Error::none: break;
         case gpu::Error::unsupported: reason = "unsupported: no device exposes every required extension and feature"; break;
         case gpu::Error::device_lost: reason = "device lost"; break;
+        case gpu::Error::out_of_memory: reason = "out of memory"; break;
         case gpu::Error::driver_error: reason = "driver error"; break;
         }
         printf("create_device failed: %s\n", reason);
