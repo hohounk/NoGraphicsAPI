@@ -393,7 +393,9 @@ if(NOT APPLE)
             target_compile_definitions(test_startup_failures PRIVATE NOGRAPHICSAPI_TEST_XCB VK_USE_PLATFORM_XCB_KHR)
         endif()
         add_test(NAME test_startup_failures_present COMMAND test_startup_failures --present)
-        set_tests_properties(test_startup_failures_present PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+        # The driver reports only VK_EXT_swapchain_maintenance_1: the test hides the KHR name.
+        add_test(NAME test_startup_failures_present_ext_swapchain_maintenance1 COMMAND test_startup_failures --present-ext-swapchain-maintenance1)
+        set_tests_properties(test_startup_failures_present test_startup_failures_present_ext_swapchain_maintenance1 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
             FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
     endif()
     # The forwarded probe message prints the "NoGraphicsAPI validation:" prefix on purpose.

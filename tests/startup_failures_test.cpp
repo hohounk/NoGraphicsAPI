@@ -37,6 +37,8 @@ bool reported_fatal = false;
 char diagnostic[2048]{};
 uint32 instance_layers = 0;
 bool instance_debug_utils = false;
+bool hide_khr_swapchain_maintenance1 = false;
+uint32 hidden_extensions = 0;
 
 VkResult enumerate_extensions(gpu::Span<const char* const> names, uint32* count, VkExtensionProperties* values) noexcept
 {
@@ -56,11 +58,18 @@ VkResult VKAPI_CALL test_vkEnumerateDeviceExtensionProperties(VkPhysicalDevice p
     if (advertised_device_extensions.data && (!reject_first_device_only || device_extension_queries++ == 0))
         return enumerate_extensions(advertised_device_extensions, count, values);
     const VkResult result = vkEnumerateDeviceExtensionProperties(physical, layer, count, values);
-    if (hide_address_commands && values && result == VK_SUCCESS)
+    if (values && result == VK_SUCCESS && (hide_address_commands || hide_khr_swapchain_maintenance1))
     {
         uint32 written = 0;
         for (uint32 index = 0; index < *count; ++index)
-            if (strcmp(values[index].extensionName, VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME)) values[written++] = values[index];
+        {
+            const bool drop_address = hide_address_commands &&
+                !strcmp(values[index].extensionName, VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME);
+            const bool drop_maintenance = hide_khr_swapchain_maintenance1 &&
+                !strcmp(values[index].extensionName, VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+            if (drop_maintenance) ++hidden_extensions;
+            if (!drop_address && !drop_maintenance) values[written++] = values[index];
+        }
         *count = written;
     }
     return result;
@@ -708,6 +717,7 @@ int present_frames(const char* const* extensions, VkSurfaceKHR_T* (*create_surfa
     check(extent.x == window.extent.x && extent.y == window.extent.y, "get_drawable_extent returns the window extent");
     check(fixed_extent ? window.extent_calls == 0 : window.extent_calls != 0, "drawable_extent is asked only when the surface has no fixed extent");
     check(reports == 0, "presentation reports no diagnostic");
+    check(gpu::get_device_caps(device).swapchain_maintenance1, "caps report swapchain_maintenance1 on a presentation device");
     gpu::wait_idle(device);
     gpu::destroy_timeline_semaphore(timeline);
     gpu::destroy_command_pool(pool);
@@ -749,6 +759,7 @@ int present_case() noexcept
         printf("SKIP: no GPU presents to a headless or X11 surface.\n");
         return 77;
     }
+    if (hide_khr_swapchain_maintenance1) check(hidden_extensions != 0, "the KHR swapchain_maintenance1 name is hidden from the device");
     printf("Linux presentation, %s surface: %u failures\n", surface, failures);
     return failures ? 1 : result;
 }
@@ -887,6 +898,11 @@ DWORD WINAPI callback_thread(void*) noexcept
 int main(int argc, char** argv)
 {
     if (argc == 2 && !strcmp(argv[1], "--present")) return present_case();
+    if (argc == 2 && !strcmp(argv[1], "--present-ext-swapchain-maintenance1"))
+    {
+        hide_khr_swapchain_maintenance1 = true;
+        return present_case();
+    }
     if (argc == 2 && !strcmp(argv[1], "--validation-forwarding")) return validation_forwarding_case();
     if (argc == 3 && !strcmp(argv[1], "--device-lost")) return device_lost_case(argv[2]);
     gpu::set_error_callback(receive_error);
