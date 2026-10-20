@@ -23,6 +23,7 @@ result. Between syncs, a topic gains new commits only.
 | `pr/16-device-diagnostics` | Upstream PR #16, frozen at `a48f70e` | Does not move. Not a queue entry. Moves only when the owner takes a newer PR head. |
 | `pr/16-fixes` | The PR #16 carry and the local fixes to it | Replay the PR's code commits and the local fixes onto `main`. The frozen branch is not an ancestor of the result. |
 | `presentation-pr/16` | Tests that need both `linux-wsi` and `pr/16-fixes` | Recreate by merging those two replayed topics, then replay its own commits. |
+| `clang-warnings` | Fixes for clang warnings on upstream lines under the gate flags (nga-col.2, nga-col.3) | Replay its commits onto `main`. Drop a commit that upstream has fixed in the meantime. |
 | `integration` | **Every consumer pins a commit SHA of this branch** | Rebuild from the new `main` by `--no-ff` merges of the queue, plus `CLAUDE.md` commits. The previous tip is tagged before the branch moves. |
 
 ## Rules
@@ -122,8 +123,8 @@ it here.
 2. Tag the current `integration` tip as `pins/integration-<sha>` before the
    branch moves. The tag is what keeps already-published pins fetchable.
 3. Replay the queue onto the new `main`, in this order: `device-lost`,
-   `linux-wsi`, `pr/16-fixes`, then recreate `presentation-device-lost` and
-   `presentation-pr/16`. Replay code commits. Drop a commit whose tree change
+   `linux-wsi`, `pr/16-fixes`, `clang-warnings`, then recreate
+   `presentation-device-lost` and `presentation-pr/16`. Replay code commits. Drop a commit whose tree change
    cancels out, such as a `CLAUDE.md` edit on a topic that does not carry
    that file. Resolve conflicts by the adaptation rule above. Record each
    resolution and its reason in the commit or merge message.
