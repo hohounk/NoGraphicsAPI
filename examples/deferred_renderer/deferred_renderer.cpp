@@ -165,7 +165,7 @@ int main()
     }
 
     const DeviceCaps& caps = get_device_caps(device);
-    printf("Using %s\n", caps.device_name);
+    printf("Using %s\n", get_device_info(device).device_name);
 
     // Shaders
     const Span<byte> simulation_code = read_shader(NOGRAPHICSAPI_SIMULATION_COMPUTE_SHADER_PATH);
