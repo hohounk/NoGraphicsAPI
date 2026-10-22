@@ -43,7 +43,10 @@ Windowed devices also require `VK_KHR_get_surface_capabilities2`,
 `VK_KHR_surface_maintenance1`, and [`VK_KHR_swapchain_maintenance1`][swapchain-maintenance]. The
 original EXT variants are accepted as a paired fallback. Swapchain maintenance supplies a completion
 fence for each presentation.
-Debug builds enable `VK_EXT_debug_utils` and the Khronos validation layer when available.
+Every build enables `VK_EXT_debug_utils` when the instance offers it. `set_debug_name` and the
+`begin_debug_label`/`end_debug_label` pair use it, so frame captures of release builds show object
+names and command regions. Without the extension these calls do nothing. Debug builds also enable
+the Khronos validation layer and a debug messenger when available.
 
 ## GPU heaps and application-side allocation
 
