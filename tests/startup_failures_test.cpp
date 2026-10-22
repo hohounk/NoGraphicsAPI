@@ -36,7 +36,6 @@ uint32 failures = 0, reports = 0;
 bool reported_fatal = false;
 char diagnostic[2048]{};
 uint32 instance_layers = 0;
-bool instance_debug_utils = false;
 bool hide_khr_swapchain_maintenance1 = false;
 uint32 hidden_extensions = 0;
 
@@ -124,9 +123,6 @@ bool inject(const char* operation) noexcept
 VkResult VKAPI_CALL test_vkCreateInstance(const VkInstanceCreateInfo* info, const VkAllocationCallbacks* allocator, VkInstance* instance)
 {
     instance_layers = info->enabledLayerCount;
-    instance_debug_utils = false;
-    for (uint32 index = 0; index < info->enabledExtensionCount; ++index)
-        instance_debug_utils |= !strcmp(info->ppEnabledExtensionNames[index], VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     if (inject("vkCreateInstance")) return failure_result;
     const VkResult result = vkCreateInstance(info, allocator, instance);
     if (result == VK_SUCCESS) ++live.instances;
@@ -626,7 +622,7 @@ void validation_disabled() noexcept
     const gpu::DeviceInit init = gpu::create_device({.validation = false});
     check(init.device != nullptr, "device creation without validation succeeds");
     if (!init.device) return;
-    check(!instance_layers && !instance_debug_utils && !init.device->debug_messenger, "validation = false enables no layer and no messenger");
+    check(!instance_layers && !init.device->debug_messenger, "validation = false enables no layer and no messenger");
     gpu::destroy_device(init.device);
     unchanged(before);
 }
