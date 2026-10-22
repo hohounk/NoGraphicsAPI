@@ -1185,6 +1185,14 @@ void destroy_pso(PSO* pso) noexcept
     }
 }
 
+void set_debug_name(const GpuHeap&, const char*) noexcept {}
+void set_debug_name(const TextureHeap&, const char*) noexcept {}
+void set_debug_name(const Texture*, const char*) noexcept {}
+void set_debug_name(const RenderView*, const char*) noexcept {}
+void set_debug_name(const TextureDescriptorHeap*, const char*) noexcept {}
+void set_debug_name(const SamplerDescriptorHeap*, const char*) noexcept {}
+void set_debug_name(const PSO*, const char*) noexcept {}
+
 CommandPool* create_command_pool(Device* device, uint32 queue_index) noexcept
 {
     @autoreleasepool
@@ -1521,6 +1529,9 @@ void write_timestamp(CommandBuffer* commands, uint64* cpu_destination, Stage sta
         }
     }
 }
+
+void begin_debug_label(CommandBuffer*, const char*) noexcept {}
+void end_debug_label(CommandBuffer*) noexcept {}
 
 void read_timestamps(CommandPool* pool) noexcept
 {

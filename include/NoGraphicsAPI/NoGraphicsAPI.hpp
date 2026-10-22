@@ -801,6 +801,17 @@ void copy_sampler_descriptors(const SamplerDescriptorHeap* source, uint32 source
 [[nodiscard]] PSO* create_compute_pso(Device* device, const ShaderStage& compute) noexcept;
 void destroy_pso(PSO* pso) noexcept;
 
+// Names show in validation messages and frame captures. Vulkan copies the name; Metal ignores it.
+// Vulkan uses VK_EXT_debug_utils in every build when the instance offers it, and ignores the name otherwise.
+// Naming an object is externally synchronized with every other CPU use of that object, including recording commands that use it.
+void set_debug_name(const GpuHeap& heap, const char* name) noexcept;
+void set_debug_name(const TextureHeap& heap, const char* name) noexcept;
+void set_debug_name(const Texture* texture, const char* name) noexcept;
+void set_debug_name(const RenderView* render_view, const char* name) noexcept;
+void set_debug_name(const TextureDescriptorHeap* heap, const char* name) noexcept;
+void set_debug_name(const SamplerDescriptorHeap* heap, const char* name) noexcept;
+void set_debug_name(const PSO* pso, const char* name) noexcept;
+
 // Pools retain command storage until destruction. Reset only after every submitted buffer from this pool completes; unsubmitted buffers are discarded.
 // Reset invalidates all previously returned CommandBuffer handles. Use one pool per worker and in-flight frame for independent recording/reuse.
 // Buffers from a pool must be submitted to the selected queue's family.
@@ -837,6 +848,11 @@ void write_timestamp(CommandBuffer* commands, uint64* cpu_destination, Stage sta
 // Retrieve unread timestamps from submitted buffers after every submission from this pool completes. Does not wait.
 // Call before resetting the pool; reset discards unread results. Unsubmitted buffers are ignored.
 void read_timestamps(CommandPool* pool) noexcept;
+
+// Labels name a region of commands in frame captures and GPU traces. Labels nest; close each one in the command buffer that opened it.
+// Vulkan uses VK_EXT_debug_utils in every build when the instance offers it, and ignores labels otherwise. Metal ignores them.
+void begin_debug_label(CommandBuffer* commands, const char* name) noexcept;
+void end_debug_label(CommandBuffer* commands) noexcept;
 
 // Every render pass starts with no graphics PSO. Bind one inside the pass before drawing, including every resumed segment.
 // Render-pass boundaries invalidate the current PSO selection; rebind a compute PSO before dispatching after a render pass.
