@@ -809,6 +809,11 @@ void write_timestamp(CommandBuffer* commands, uint64* cpu_destination, Stage sta
 // Call before resetting the pool; reset discards unread results. Unsubmitted buffers are ignored.
 void read_timestamps(CommandPool* pool) noexcept;
 
+// Labels name a region of commands in frame captures and GPU traces. Labels nest; close each one in the command buffer that opened it.
+// Vulkan uses VK_EXT_debug_utils in every build when the instance offers it, and ignores labels otherwise. Metal ignores them.
+void begin_debug_label(CommandBuffer* commands, const char* name) noexcept;
+void end_debug_label(CommandBuffer* commands) noexcept;
+
 // Every render pass starts with no graphics PSO. Bind one inside the pass before drawing, including every resumed segment.
 // Render-pass boundaries invalidate the current PSO selection; rebind a compute PSO before dispatching after a render pass.
 // Each segment needs matching attachments, load/store operations, and clear values, and its own begin/end_render_pass pair.

@@ -16,6 +16,13 @@ struct NameRecord
 NameRecord names[32]{};
 uint32 name_count = 0;
 PFN_vkSetDebugUtilsObjectNameEXT next_set_name = nullptr;
+VkCommandBuffer label_commands[8]{};
+char label_names[8][64]{};
+uint32 label_count = 0;
+VkCommandBuffer end_label_commands[8]{};
+uint32 end_label_count = 0;
+PFN_vkCmdBeginDebugUtilsLabelEXT next_begin_label = nullptr;
+PFN_vkCmdEndDebugUtilsLabelEXT next_end_label = nullptr;
 bool hide_debug_utils = false;
 uint32 failures = 0;
 
@@ -30,6 +37,23 @@ VKAPI_ATTR VkResult VKAPI_CALL record_set_name(VkDevice device, const VkDebugUti
     return next_set_name(device, info);
 }
 
+VKAPI_ATTR void VKAPI_CALL record_begin_label(VkCommandBuffer commands, const VkDebugUtilsLabelEXT* label)
+{
+    if (label_count < 8)
+    {
+        label_commands[label_count] = commands;
+        snprintf(label_names[label_count], sizeof(label_names[label_count]), "%s", label->pLabelName);
+        ++label_count;
+    }
+    next_begin_label(commands, label);
+}
+
+VKAPI_ATTR void VKAPI_CALL record_end_label(VkCommandBuffer commands)
+{
+    if (end_label_count < 8) end_label_commands[end_label_count++] = commands;
+    next_end_label(commands);
+}
+
 PFN_vkVoidFunction VKAPI_CALL test_vkGetDeviceProcAddr(VkDevice device, const char* name)
 {
     const PFN_vkVoidFunction proc = vkGetDeviceProcAddr(device, name);
@@ -37,6 +61,16 @@ PFN_vkVoidFunction VKAPI_CALL test_vkGetDeviceProcAddr(VkDevice device, const ch
     {
         next_set_name = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(proc);
         return reinterpret_cast<PFN_vkVoidFunction>(record_set_name);
+    }
+    if (proc && strcmp(name, "vkCmdBeginDebugUtilsLabelEXT") == 0)
+    {
+        next_begin_label = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(proc);
+        return reinterpret_cast<PFN_vkVoidFunction>(record_begin_label);
+    }
+    if (proc && strcmp(name, "vkCmdEndDebugUtilsLabelEXT") == 0)
+    {
+        next_end_label = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(proc);
+        return reinterpret_cast<PFN_vkVoidFunction>(record_end_label);
     }
     return proc;
 }
@@ -138,6 +172,38 @@ void object_names(gpu::Device* device) noexcept
     gpu::destroy_gpu_heap(gpu_heap);
 }
 
+VkCommandBuffer record_labels(gpu::Device* device, const char* outer, const char* inner) noexcept
+{
+    gpu::TimelineSemaphore* timeline = gpu::create_timeline_semaphore(device);
+    gpu::CommandPool* pool = gpu::create_command_pool(device);
+    gpu::CommandBuffer* commands = gpu::begin_commands(pool);
+    const VkCommandBuffer native = commands->command_buffer;
+    gpu::begin_debug_label(commands, outer);
+    gpu::begin_debug_label(commands, inner);
+    gpu::end_debug_label(commands);
+    gpu::end_debug_label(commands);
+    gpu::end_commands(commands);
+    gpu::CommandBuffer* const submitted[]{commands};
+    gpu::submit(device, {.commands = submitted, .completion = {.semaphore = timeline, .value = 1}});
+    gpu::wait_timeline({.semaphore = timeline, .value = 1});
+    gpu::destroy_command_pool(pool);
+    gpu::destroy_timeline_semaphore(timeline);
+    return native;
+}
+
+void command_labels(gpu::Device* device) noexcept
+{
+    label_count = 0;
+    end_label_count = 0;
+    const VkCommandBuffer native = record_labels(device, "frame", "pass");
+    check(label_count == 2 && end_label_count == 2, "two labels open and close");
+    check(label_count == 2 && strcmp(label_names[0], "frame") == 0 && strcmp(label_names[1], "pass") == 0, "labels keep their names and order");
+    bool same_buffer = label_count == 2 && end_label_count == 2;
+    for (uint32 index = 0; index < label_count && index < end_label_count; ++index)
+        same_buffer = same_buffer && label_commands[index] == native && end_label_commands[index] == native;
+    check(same_buffer, "labels are recorded into the command buffer of the commands");
+}
+
 void names_without_extension() noexcept
 {
     hide_debug_utils = true;
@@ -149,6 +215,10 @@ void names_without_extension() noexcept
     const gpu::GpuHeap heap = gpu::create_gpu_heap(init.device, 4096);
     gpu::set_debug_name(heap, "hidden");
     check(name_count == 0, "names are ignored without VK_EXT_debug_utils");
+    label_count = 0;
+    end_label_count = 0;
+    record_labels(init.device, "hidden frame", "hidden pass");
+    check(label_count == 0 && end_label_count == 0, "labels are ignored without VK_EXT_debug_utils");
     gpu::destroy_gpu_heap(heap);
     gpu::wait_idle(init.device);
     gpu::destroy_device(init.device);
@@ -166,6 +236,7 @@ int main()
     check(init.device != nullptr, "device creation succeeds");
     if (!init.device) return 1;
     object_names(init.device);
+    command_labels(init.device);
     gpu::wait_idle(init.device);
     gpu::destroy_device(init.device);
     names_without_extension();

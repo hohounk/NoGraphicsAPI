@@ -1530,6 +1530,9 @@ void write_timestamp(CommandBuffer* commands, uint64* cpu_destination, Stage sta
     }
 }
 
+void begin_debug_label(CommandBuffer*, const char*) noexcept {}
+void end_debug_label(CommandBuffer*) noexcept {}
+
 void read_timestamps(CommandPool* pool) noexcept
 {
     @autoreleasepool

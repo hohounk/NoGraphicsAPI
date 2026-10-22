@@ -509,7 +509,10 @@ struct DeviceFunctions
     PFN_vkCmdCopyMemoryKHR cmd_copy_memory = nullptr;
     PFN_vkCmdCopyMemoryToImageKHR cmd_copy_memory_to_image = nullptr;
     PFN_vkCmdCopyImageToMemoryKHR cmd_copy_image_to_memory = nullptr;
-    PFN_vkSetDebugUtilsObjectNameEXT set_debug_utils_object_name = nullptr; // Null without VK_EXT_debug_utils.
+    // Null without VK_EXT_debug_utils.
+    PFN_vkSetDebugUtilsObjectNameEXT set_debug_utils_object_name = nullptr;
+    PFN_vkCmdBeginDebugUtilsLabelEXT cmd_begin_debug_utils_label = nullptr;
+    PFN_vkCmdEndDebugUtilsLabelEXT cmd_end_debug_utils_label = nullptr;
 };
 
 struct BackingBuffer
@@ -2039,7 +2042,11 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
         return fail_device_creation(state, Error::driver_error, "The graphics driver did not provide the required Vulkan command entry points.");
     }
     if (debug_utils)
+    {
         state->fn.set_debug_utils_object_name = load_device_proc<PFN_vkSetDebugUtilsObjectNameEXT>(state->device, "vkSetDebugUtilsObjectNameEXT");
+        state->fn.cmd_begin_debug_utils_label = load_device_proc<PFN_vkCmdBeginDebugUtilsLabelEXT>(state->device, "vkCmdBeginDebugUtilsLabelEXT");
+        state->fn.cmd_end_debug_utils_label = load_device_proc<PFN_vkCmdEndDebugUtilsLabelEXT>(state->device, "vkCmdEndDebugUtilsLabelEXT");
+    }
     if (selected.address_commands)
     {
         state->fn.cmd_bind_index_buffer = load_device_proc<PFN_vkCmdBindIndexBuffer3KHR>(state->device, "vkCmdBindIndexBuffer3KHR");
@@ -2186,6 +2193,20 @@ void write_timestamp(CommandBuffer* commands, uint64* cpu_destination, Stage sta
     assert(cpu_destination);
     commands->timestamp_destinations[commands->timestamp_count] = cpu_destination;
     vkCmdWriteTimestamp2(commands->command_buffer, to_vk(stage), commands->timestamp_pool, commands->timestamp_count++);
+}
+
+void begin_debug_label(CommandBuffer* commands, const char* name) noexcept
+{
+    assert(commands && commands->state);
+    if (!commands->state->fn.cmd_begin_debug_utils_label) return;
+    const VkDebugUtilsLabelEXT label{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, .pLabelName = name};
+    commands->state->fn.cmd_begin_debug_utils_label(commands->command_buffer, &label);
+}
+
+void end_debug_label(CommandBuffer* commands) noexcept
+{
+    assert(commands && commands->state);
+    if (commands->state->fn.cmd_end_debug_utils_label) commands->state->fn.cmd_end_debug_utils_label(commands->command_buffer);
 }
 
 GpuHeap create_gpu_heap(Device* device, uint64 byte_count, MemoryType memory) noexcept
