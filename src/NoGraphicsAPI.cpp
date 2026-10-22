@@ -509,6 +509,7 @@ struct DeviceFunctions
     PFN_vkCmdCopyMemoryKHR cmd_copy_memory = nullptr;
     PFN_vkCmdCopyMemoryToImageKHR cmd_copy_memory_to_image = nullptr;
     PFN_vkCmdCopyImageToMemoryKHR cmd_copy_image_to_memory = nullptr;
+    PFN_vkSetDebugUtilsObjectNameEXT set_debug_utils_object_name = nullptr; // Null without VK_EXT_debug_utils.
 };
 
 struct BackingBuffer
@@ -1792,8 +1793,10 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
     uint32 enabled_instance_extension_count = 0;
     const char* enabled_layers[1]{};
     uint32 enabled_layer_count = 0;
+    // Names and labels reach frame captures of release builds too; the messenger and validation stay debug-only.
+    const bool debug_utils = has_name({instance_extensions, instance_extension_count}, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    if (debug_utils) enabled_instance_extensions[enabled_instance_extension_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 #if !defined(NDEBUG)
-    if (debug_utils_available) enabled_instance_extensions[enabled_instance_extension_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     if (validation_available) enabled_layers[enabled_layer_count++] = "VK_LAYER_KHRONOS_validation";
 #endif
 #if defined(_WIN32)
@@ -2035,6 +2038,8 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
     {
         return fail_device_creation(state, Error::driver_error, "The graphics driver did not provide the required Vulkan command entry points.");
     }
+    if (debug_utils)
+        state->fn.set_debug_utils_object_name = load_device_proc<PFN_vkSetDebugUtilsObjectNameEXT>(state->device, "vkSetDebugUtilsObjectNameEXT");
     if (selected.address_commands)
     {
         state->fn.cmd_bind_index_buffer = load_device_proc<PFN_vkCmdBindIndexBuffer3KHR>(state->device, "vkCmdBindIndexBuffer3KHR");
@@ -3251,6 +3256,57 @@ PSO* create_compute_pso(Device* device, const ShaderStage& compute) noexcept
 void destroy_pso(PSO* pso) noexcept
 {
     delete pso;
+}
+
+namespace
+{
+void set_object_name(const Device* device, VkObjectType type, uint64 handle, const char* name) noexcept
+{
+    if (!device->fn.set_debug_utils_object_name) return;
+    const VkDebugUtilsObjectNameInfoEXT info{
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = type,
+        .objectHandle = handle,
+        .pObjectName = name,
+    };
+    device->fn.set_debug_utils_object_name(device->device, &info);
+}
+} // namespace
+
+void set_debug_name(const GpuHeap& heap, const char* name) noexcept
+{
+    set_object_name(heap.owner->state, VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64>(heap.owner->backing.buffer), name);
+    set_object_name(heap.owner->state, VK_OBJECT_TYPE_DEVICE_MEMORY, reinterpret_cast<uint64>(heap.owner->backing.memory), name);
+}
+
+void set_debug_name(const TextureHeap& heap, const char* name) noexcept
+{
+    set_object_name(heap.owner->state, VK_OBJECT_TYPE_DEVICE_MEMORY, reinterpret_cast<uint64>(heap.owner->memory), name);
+}
+
+void set_debug_name(const Texture* texture, const char* name) noexcept
+{
+    set_object_name(texture->state, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64>(texture->image), name);
+}
+
+void set_debug_name(const RenderView* render_view, const char* name) noexcept
+{
+    set_object_name(render_view->state, VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64>(render_view->view), name);
+}
+
+void set_debug_name(const TextureDescriptorHeap* heap, const char* name) noexcept
+{
+    set_debug_name(heap->storage, name);
+}
+
+void set_debug_name(const SamplerDescriptorHeap* heap, const char* name) noexcept
+{
+    set_debug_name(heap->storage, name);
+}
+
+void set_debug_name(const PSO* pso, const char* name) noexcept
+{
+    set_object_name(pso->state, VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64>(pso->pso), name);
 }
 
 CommandPool* create_command_pool(Device* device, uint32 queue_index) noexcept
