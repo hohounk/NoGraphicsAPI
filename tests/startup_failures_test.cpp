@@ -28,6 +28,8 @@ thread_local gpu::Span<const char* const> advertised_instance_extensions{};
 thread_local bool reject_first_device_only = false;
 thread_local bool hide_address_commands = false;
 thread_local uint32 device_extension_queries = 0;
+thread_local gpu::Span<const uint32> surface_format_counts{};
+thread_local uint32 surface_format_queries = 0;
 uint32 command_allocations = 0, command_frees = 0;
 uint32 failures = 0, reports = 0;
 bool reported_fatal = false;
@@ -77,6 +79,31 @@ VkResult VKAPI_CALL test_vkEnumeratePhysicalDevices(VkInstance instance, uint32*
         ++*count;
     }
     return result;
+}
+
+// Models a driver whose surface format list changes between queries: each query sees the next count, and the last count repeats.
+VkResult VKAPI_CALL test_vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice physical, VkSurfaceKHR surface, uint32* count, VkSurfaceFormatKHR* values)
+{
+    if (!surface_format_counts.data) return vkGetPhysicalDeviceSurfaceFormatsKHR(physical, surface, count, values);
+    const uint32 query = surface_format_queries++;
+    const uint32 available = surface_format_counts.data[query < surface_format_counts.size ? query : surface_format_counts.size - 1];
+    if (!values) { *count = available; return VK_SUCCESS; }
+    const uint32 written = *count < available ? *count : available;
+    for (uint32 index = 0; index < written; ++index)
+        values[index] = {.format = index == 0 ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_R16G16B16A16_SFLOAT,
+            .colorSpace = index < 14 ? VK_COLOR_SPACE_SRGB_NONLINEAR_KHR : VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT};
+    *count = written;
+    return written == available ? VK_SUCCESS : VK_INCOMPLETE;
+}
+
+// A zero extent lets recreate_swapchain finish after the format check without a native swapchain.
+VkResult VKAPI_CALL test_vkGetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice physical, const VkPhysicalDeviceSurfaceInfo2KHR* info,
+    VkSurfaceCapabilities2KHR* capabilities)
+{
+    if (!surface_format_counts.data) return vkGetPhysicalDeviceSurfaceCapabilities2KHR(physical, info, capabilities);
+    capabilities->surfaceCapabilities = {.minImageCount = 2, .currentExtent = {.width = 0, .height = 0},
+        .supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
+    return VK_SUCCESS;
 }
 
 bool inject(const char* operation) noexcept
@@ -170,6 +197,8 @@ void VKAPI_CALL test_vkFreeCommandBuffers(VkDevice device, VkCommandPool pool, u
 #define vkEnumerateDeviceExtensionProperties test_vkEnumerateDeviceExtensionProperties
 #define vkEnumerateInstanceExtensionProperties test_vkEnumerateInstanceExtensionProperties
 #define vkEnumeratePhysicalDevices test_vkEnumeratePhysicalDevices
+#define vkGetPhysicalDeviceSurfaceFormatsKHR test_vkGetPhysicalDeviceSurfaceFormatsKHR
+#define vkGetPhysicalDeviceSurfaceCapabilities2KHR test_vkGetPhysicalDeviceSurfaceCapabilities2KHR
 #define vkCreateDevice test_vkCreateDevice
 #define vkCreateBuffer test_vkCreateBuffer
 #define vkAllocateMemory test_vkAllocateMemory
@@ -513,6 +542,33 @@ void pipeline_failures(gpu::Device* device) noexcept
     unchanged(before);
 }
 
+void surface_format_failures(gpu::Device* device) noexcept
+{
+    struct Case
+    {
+        uint32 counts[2];
+        gpu::Error error;
+        const char* message;
+    };
+    const Case cases[]{
+        {{14, 28}, gpu::Error::none, "a format list that grows after the first query keeps the swapchain setup"},
+        {{28, 14}, gpu::Error::none, "a format list that shrinks after the first query keeps the swapchain setup"},
+        {{65, 65}, gpu::Error::unsupported, "more formats than the wrapper holds reject the surface"},
+    };
+    for (const Case& test : cases)
+    {
+        gpu::Swapchain swapchain;
+        swapchain.state = device;
+        surface_format_counts = test.counts;
+        surface_format_queries = 0;
+        arm(nullptr);
+        const gpu::Error error = gpu::recreate_swapchain(swapchain);
+        check(error == test.error && reports == 0, test.message);
+        check(error != gpu::Error::none || swapchain.recreate_required, "a zero surface extent defers the swapchain");
+        surface_format_counts = {};
+    }
+}
+
 #if defined(_WIN32)
 DWORD WINAPI callback_thread(void*) noexcept
 {
@@ -551,6 +607,7 @@ int main()
     command_failures(device);
     utility_failures(device);
     pipeline_failures(device);
+    surface_format_failures(device);
     arm("vkCreateBuffer");
     gpu::set_error_callback(nullptr);
     const gpu::GpuHeap silent = gpu::create_gpu_heap(device, 1024);
