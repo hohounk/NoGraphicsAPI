@@ -492,6 +492,33 @@ void command_failures(gpu::Device* device) noexcept
     }
 }
 
+void surface_format_failures(gpu::Device* device) noexcept
+{
+    struct Case
+    {
+        uint32 counts[2];
+        gpu::Error error;
+        const char* message;
+    };
+    const Case cases[]{
+        {{14, 28}, gpu::Error::none, "a format list that grows after the first query keeps the swapchain setup"},
+        {{28, 14}, gpu::Error::none, "a format list that shrinks after the first query keeps the swapchain setup"},
+        {{65, 65}, gpu::Error::unsupported, "more formats than the wrapper holds reject the surface"},
+    };
+    for (const Case& test : cases)
+    {
+        gpu::Swapchain swapchain;
+        swapchain.state = device;
+        surface_format_counts = test.counts;
+        surface_format_queries = 0;
+        arm(nullptr);
+        const gpu::Error error = gpu::recreate_swapchain(swapchain);
+        check(error == test.error && reports == 0, test.message);
+        check(error != gpu::Error::none || swapchain.recreate_required, "a zero surface extent defers the swapchain");
+        surface_format_counts = {};
+    }
+}
+
 gpu::ByteSpan read_shader(const char* path) noexcept
 {
     FILE* file = fopen(path, "rb");
@@ -540,33 +567,6 @@ void pipeline_failures(gpu::Device* device) noexcept
     free(const_cast<byte*>(vertex.data));
     free(const_cast<byte*>(fragment.data));
     unchanged(before);
-}
-
-void surface_format_failures(gpu::Device* device) noexcept
-{
-    struct Case
-    {
-        uint32 counts[2];
-        gpu::Error error;
-        const char* message;
-    };
-    const Case cases[]{
-        {{14, 28}, gpu::Error::none, "a format list that grows after the first query keeps the swapchain setup"},
-        {{28, 14}, gpu::Error::none, "a format list that shrinks after the first query keeps the swapchain setup"},
-        {{65, 65}, gpu::Error::unsupported, "more formats than the wrapper holds reject the surface"},
-    };
-    for (const Case& test : cases)
-    {
-        gpu::Swapchain swapchain;
-        swapchain.state = device;
-        surface_format_counts = test.counts;
-        surface_format_queries = 0;
-        arm(nullptr);
-        const gpu::Error error = gpu::recreate_swapchain(swapchain);
-        check(error == test.error && reports == 0, test.message);
-        check(error != gpu::Error::none || swapchain.recreate_required, "a zero surface extent defers the swapchain");
-        surface_format_counts = {};
-    }
 }
 
 #if defined(_WIN32)
