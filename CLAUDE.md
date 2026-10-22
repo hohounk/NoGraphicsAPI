@@ -24,6 +24,7 @@ result. Between syncs, a topic gains new commits only.
 | `pr/16-fixes` | The PR #16 carry and the local fixes to it | Replay the PR's code commits and the local fixes onto `main`. The frozen branch is not an ancestor of the result. |
 | `presentation-pr/16` | Tests that need both `linux-wsi` and `pr/16-fixes` | Recreate by merging those two replayed topics, then replay its own commits. |
 | `clang-warnings` | Fixes for clang warnings on upstream lines under the gate flags (nga-col.2, nga-col.3) | Replay its commits onto `main`. Drop a commit that upstream has fixed in the meantime. |
+| `debug-utils` | Object names and command labels through `VK_EXT_debug_utils`, in every build (nga-col.6, nga-col.8) | Replay its commits onto `main`. |
 | `integration` | **Every consumer pins a commit SHA of this branch** | Rebuild from the new `main` by `--no-ff` merges of the queue, plus `CLAUDE.md` commits. The previous tip is tagged before the branch moves. |
 
 ## Rules
@@ -82,8 +83,8 @@ cmake -S . -B "$B/suite" "${F[@]}" -DNOGRAPHICSAPI_BUILD_TESTS=ON -DNOGRAPHICSAP
   && cmake --build "$B/suite" > "$B/suite.build" 2>&1 \
   && timeout -k 5 540 ctest --test-dir "$B/suite" --timeout 120 > "$B/suite.ctest" 2>&1; echo "suite=$?"
 cmake -S . -B "$B/rel" "${F[@]}" -DCMAKE_BUILD_TYPE=Release -DNOGRAPHICSAPI_BUILD_TESTS=ON -DNOGRAPHICSAPI_BUILD_EXAMPLES=OFF > "$B/rel.cfg" 2>&1 \
-  && cmake --build "$B/rel" --target test_startup_failures > "$B/rel.build" 2>&1 \
-  && timeout -k 5 300 ctest --test-dir "$B/rel" -R '^test_startup_failures' --timeout 120 > "$B/rel.ctest" 2>&1; echo "release=$?"
+  && cmake --build "$B/rel" --target test_startup_failures test_debug_utils > "$B/rel.build" 2>&1 \
+  && timeout -k 5 300 ctest --test-dir "$B/rel" -R '^test_(startup_failures|debug_utils)' --timeout 120 > "$B/rel.ctest" 2>&1; echo "release=$?"
 cmake -S . -B "$B/ex" "${F[@]}" -DNOGRAPHICSAPI_BUILD_TESTS=OFF -DNOGRAPHICSAPI_BUILD_EXAMPLES=ON > "$B/ex.cfg" 2>&1
 cmake --build "$B/ex" -- -k 0 > "$B/ex.build" 2>&1; grep '^FAILED:' "$B/ex.build"
 grep -E 'tests passed|Failed|\*\*\*' "$B/suite.ctest" "$B/rel.ctest"
@@ -98,7 +99,8 @@ Linux a missing `FAILED:` line also fails the gate: it means that the
 examples step did not build at all.
 
 The Release run exists because `assert_vk` is a no-op under `NDEBUG`, and the
-first build has no `CMAKE_BUILD_TYPE`.
+first build has no `CMAKE_BUILD_TYPE`. `test_debug_utils` runs there too,
+because `VK_EXT_debug_utils` must stay on in builds with `NDEBUG`.
 
 The upstream test `test_command_context` fails sometimes ("Timestamp readback
 failed in batch 3"), also without the fork commits. If it is the only
@@ -123,7 +125,7 @@ it here.
 2. Tag the current `integration` tip as `pins/integration-<sha>` before the
    branch moves. The tag is what keeps already-published pins fetchable.
 3. Replay the queue onto the new `main`, in this order: `device-lost`,
-   `linux-wsi`, `pr/16-fixes`, `clang-warnings`, then recreate
+   `linux-wsi`, `pr/16-fixes`, `clang-warnings`, `debug-utils`, then recreate
    `presentation-device-lost` and `presentation-pr/16`. Replay code commits. Drop a commit whose tree change
    cancels out, such as a `CLAUDE.md` edit on a topic that does not carry
    that file. Resolve conflicts by the adaptation rule above. Record each
