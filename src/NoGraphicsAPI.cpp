@@ -3296,37 +3296,44 @@ void set_object_name(const Device* device, VkObjectType type, uint64 handle, con
 
 void set_debug_name(const GpuHeap& heap, const char* name) noexcept
 {
+    assert(heap.owner && heap.owner->state);
     set_object_name(heap.owner->state, VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64>(heap.owner->backing.buffer), name);
     set_object_name(heap.owner->state, VK_OBJECT_TYPE_DEVICE_MEMORY, reinterpret_cast<uint64>(heap.owner->backing.memory), name);
 }
 
 void set_debug_name(const TextureHeap& heap, const char* name) noexcept
 {
+    assert(heap.owner && heap.owner->state);
     set_object_name(heap.owner->state, VK_OBJECT_TYPE_DEVICE_MEMORY, reinterpret_cast<uint64>(heap.owner->memory), name);
 }
 
 void set_debug_name(const Texture* texture, const char* name) noexcept
 {
+    assert(texture && texture->state);
     set_object_name(texture->state, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64>(texture->image), name);
 }
 
 void set_debug_name(const RenderView* render_view, const char* name) noexcept
 {
+    assert(render_view && render_view->state);
     set_object_name(render_view->state, VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64>(render_view->view), name);
 }
 
 void set_debug_name(const TextureDescriptorHeap* heap, const char* name) noexcept
 {
+    assert(heap);
     set_debug_name(heap->storage, name);
 }
 
 void set_debug_name(const SamplerDescriptorHeap* heap, const char* name) noexcept
 {
+    assert(heap);
     set_debug_name(heap->storage, name);
 }
 
 void set_debug_name(const PSO* pso, const char* name) noexcept
 {
+    assert(pso && pso->state);
     set_object_name(pso->state, VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64>(pso->pso), name);
 }
 
