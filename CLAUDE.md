@@ -25,6 +25,7 @@ result. Between syncs, a topic gains new commits only.
 | `presentation-pr/16` | Tests that need both `linux-wsi` and `pr/16-fixes` | Recreate by merging those two replayed topics, then replay its own commits. |
 | `clang-warnings` | Fixes for clang warnings on upstream lines under the gate flags (nga-col.2, nga-col.3) | Replay its commits onto `main`. Drop a commit that upstream has fixed in the meantime. |
 | `debug-utils` | Object names and command labels through `VK_EXT_debug_utils`, in every build (nga-col.6, nga-col.8) | Replay its commits onto `main`. |
+| `surface-formats` | One query of the surface formats, so a short driver list does not fail the swapchain setup (nga-col.5) | Replay its commits onto `main`. |
 | `integration` | **Every consumer pins a commit SHA of this branch** | Rebuild from the new `main` by `--no-ff` merges of the queue, plus `CLAUDE.md` commits. The previous tip is tagged before the branch moves. |
 
 ## Rules
@@ -125,7 +126,7 @@ it here.
 2. Tag the current `integration` tip as `pins/integration-<sha>` before the
    branch moves. The tag is what keeps already-published pins fetchable.
 3. Replay the queue onto the new `main`, in this order: `device-lost`,
-   `linux-wsi`, `pr/16-fixes`, `clang-warnings`, `debug-utils`, then recreate
+   `linux-wsi`, `pr/16-fixes`, `clang-warnings`, `debug-utils`, `surface-formats`, then recreate
    `presentation-device-lost` and `presentation-pr/16`. Replay code commits. Drop a commit whose tree change
    cancels out, such as a `CLAUDE.md` edit on a topic that does not carry
    that file. Resolve conflicts by the adaptation rule above. Record each
