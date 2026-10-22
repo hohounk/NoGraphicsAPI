@@ -2444,18 +2444,15 @@ Error recreate_swapchain(Swapchain& swapchain) noexcept
         return Error::unsupported;
     }
 
+    // One query: the format count can change between a count query and a fill query.
     VkSurfaceFormatKHR formats[max_surface_formats]{};
-    uint32 surface_format_count = 0;
-    error = error_from_vk(vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical_device, device.surface, &surface_format_count, nullptr),
-        "vkGetPhysicalDeviceSurfaceFormatsKHR");
+    uint32 surface_format_count = max_surface_formats;
+    const VkResult format_result = vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical_device, device.surface, &surface_format_count, formats);
+    error = format_result == VK_INCOMPLETE ? Error::unsupported : error_from_vk(format_result, "vkGetPhysicalDeviceSurfaceFormatsKHR");
     if (error != Error::none)
         return error;
-    if (surface_format_count == 0 || surface_format_count > max_surface_formats)
+    if (surface_format_count == 0)
         return Error::unsupported;
-    error = error_from_vk(vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical_device, device.surface, &surface_format_count, formats),
-        "vkGetPhysicalDeviceSurfaceFormatsKHR");
-    if (error != Error::none)
-        return error;
 
     const VkFormat requested_format = to_vk(swapchain.format);
     bool format_supported = false;
