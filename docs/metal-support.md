@@ -119,7 +119,7 @@ the opportunity for overlap between frames. Outside-render markers are approxima
 inside-render markers have a [known driver limitation](repro-metal-render-timestamps.md).
 
 `calibrate_timestamps(device)` samples the GPU clock and the CPU clock together through `sampleTimestamps:gpuTimestamp:`.
-The CPU value is `mach_absolute_time` in nanoseconds, as Metal reports it.
+The CPU value is the Metal CPU timestamp in nanoseconds. Apple does not name the clock behind it.
 
 ## References
 

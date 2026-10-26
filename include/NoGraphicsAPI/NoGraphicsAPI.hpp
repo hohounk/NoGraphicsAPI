@@ -482,7 +482,7 @@ struct DeviceInit
 struct TimestampCalibration
 {
     uint64 gpu_ticks = 0; // Same clock as write_timestamp results.
-    uint64 cpu_ns = 0; // Linux: CLOCK_MONOTONIC. Windows: QueryPerformanceCounter scaled to nanoseconds. Apple: mach_absolute_time in nanoseconds.
+    uint64 cpu_ns = 0; // Linux: CLOCK_MONOTONIC. Windows: QueryPerformanceCounter scaled to nanoseconds. Apple: the Metal CPU timestamp in nanoseconds.
 };
 
 struct SwapchainFrame
