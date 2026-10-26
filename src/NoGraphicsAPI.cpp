@@ -515,12 +515,12 @@ struct DeviceFunctions
     PFN_vkCmdDispatchIndirect2KHR cmd_dispatch_indirect = nullptr;
     PFN_vkCmdDrawMeshTasksEXT cmd_draw_mesh_tasks = nullptr;
     PFN_vkCmdDrawMeshTasksIndirect2EXT cmd_draw_mesh_tasks_indirect = nullptr;
+    // Null without VK_KHR_calibrated_timestamps.
+    PFN_vkGetCalibratedTimestampsKHR get_calibrated_timestamps = nullptr;
     PFN_vkCmdDrawMeshTasksIndirectEXT cmd_draw_mesh_tasks_indirect_buffer = nullptr;
     PFN_vkCmdCopyMemoryKHR cmd_copy_memory = nullptr;
     PFN_vkCmdCopyMemoryToImageKHR cmd_copy_memory_to_image = nullptr;
     PFN_vkCmdCopyImageToMemoryKHR cmd_copy_image_to_memory = nullptr;
-    // Null without VK_KHR_calibrated_timestamps.
-    PFN_vkGetCalibratedTimestampsKHR get_calibrated_timestamps = nullptr;
 };
 
 struct BackingBuffer
@@ -1508,9 +1508,9 @@ struct Candidate
     bool texture_compression_bc = false;
     bool texture_compression_astc = false;
     bool texture_compression_etc2 = false;
+    bool calibrated_timestamps = false;
     bool storage_input_output16 = false;
     bool khr_swapchain_maintenance1 = false;
-    bool calibrated_timestamps = false;
     VkPhysicalDeviceDescriptorHeapPropertiesEXT heap_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
     VkPhysicalDeviceVulkan12Properties vulkan12_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
     const char* missing_extensions[5]{};
@@ -1633,9 +1633,9 @@ Error inspect_candidate(VkPhysicalDevice physical_device, VkSurfaceKHR surface, 
     result.texture_compression_bc = features.core.features.textureCompressionBC == VK_TRUE;
     result.texture_compression_astc = features.core.features.textureCompressionASTC_LDR == VK_TRUE;
     result.texture_compression_etc2 = features.core.features.textureCompressionETC2 == VK_TRUE;
+    result.calibrated_timestamps = has_name({extensions, extension_count}, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
     result.storage_input_output16 = features.vulkan11.storageInputOutput16 == VK_TRUE;
     result.khr_swapchain_maintenance1 = khr_swapchain_maintenance1;
-    result.calibrated_timestamps = has_name({extensions, extension_count}, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
 
     uint32 available_queue_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &available_queue_count, nullptr);
@@ -2014,6 +2014,7 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
     const char* enabled_device_extensions[8]{};
     uint32 enabled_device_extension_count = 0;
     enabled_device_extensions[enabled_device_extension_count++] = VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME;
+    if (calibrated_timestamps) enabled_device_extensions[enabled_device_extension_count++] = VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
     if (selected.address_commands) enabled_device_extensions[enabled_device_extension_count++] = VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME;
     enabled_device_extensions[enabled_device_extension_count++] = VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME;
     if (selected.unified_image_layouts)
@@ -2021,7 +2022,6 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
         enabled_device_extensions[enabled_device_extension_count++] = VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME;
     }
     enabled_device_extensions[enabled_device_extension_count++] = VK_EXT_MESH_SHADER_EXTENSION_NAME;
-    if (calibrated_timestamps) enabled_device_extensions[enabled_device_extension_count++] = VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
 #if defined(_WIN32)
     if (presentation)
     {
