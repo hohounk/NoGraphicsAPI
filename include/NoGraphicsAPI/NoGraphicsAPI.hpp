@@ -473,6 +473,7 @@ struct DeviceCaps
     uint64 min_resource_heap_reserved_range = 0;
     uint64 min_sampler_heap_reserved_range = 0;
     float timestamp_period_ns = 0.0f; // Nanoseconds per timestamp tick; zero when profiling is unavailable.
+    bool calibrated_timestamps = false; // calibrate_timestamps returns a real pair. False when the backend lacks the extension or a time domain.
     uint32 sub_texel_precision_bits = 0; // Fractional filtering precision, for conservative sampled-field bounds.
     bool texture_compression_bc = false;
     bool texture_compression_astc = false;
@@ -515,6 +516,12 @@ struct DeviceInit
 {
     Device* device = nullptr;
     Error error = Error::none;
+};
+
+struct TimestampCalibration
+{
+    uint64 gpu_ticks = 0; // Same clock as write_timestamp results.
+    uint64 cpu_ns = 0; // Vulkan: CLOCK_MONOTONIC, or QueryPerformanceCounter scaled to nanoseconds on Windows. Metal: the Metal CPU timestamp in nanoseconds.
 };
 
 struct SwapchainFrame
@@ -849,6 +856,8 @@ void write_timestamp(CommandBuffer* commands, uint64* cpu_destination, Stage sta
 // Retrieve unread timestamps from submitted buffers after every submission from this pool completes. Does not wait.
 // Call before resetting the pool; reset discards unread results. Unsubmitted buffers are ignored.
 void read_timestamps(CommandPool* pool) noexcept;
+// Samples the GPU timestamp clock and the host clock at one moment. Zeros when DeviceCaps::calibrated_timestamps is false.
+[[nodiscard]] TimestampCalibration calibrate_timestamps(Device* device) noexcept;
 
 // Labels name a region of commands in frame captures and GPU traces. Labels nest; close each one in the command buffer that opened it.
 // Vulkan uses VK_EXT_debug_utils in every build when the instance offers it, and ignores labels otherwise. Metal ignores them.

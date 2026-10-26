@@ -29,6 +29,7 @@ conventional feature checked by device creation.
 | [`VK_KHR_shader_untyped_pointers`][untyped-pointers] | Supplies the shader-untyped-pointer capability required by the descriptor-heap SPIR-V path. |
 | [`VK_KHR_device_address_commands`][address-commands] (optional) | Index, indirect, and copy commands consume GPU addresses directly. Otherwise addresses resolve to buffers and offsets. |
 | [`VK_KHR_unified_image_layouts`][unified-layouts] (optional) | Optimizes ordinary `GENERAL` image use; the public model is unchanged without it. |
+| [`VK_KHR_calibrated_timestamps`][calibrated-timestamps] (optional) | `calibrate_timestamps` pairs a GPU timestamp tick with the host clock. |
 | [`VK_EXT_mesh_shader`][mesh-shader] | Required task and mesh shader support for direct and indirect workgroup draws. |
 | Buffer device address | Gives GPU heaps 64-bit shader addresses for their lifetime and enables typed pointer fields in shared structures. |
 | Vulkan 1.3 `synchronization2` and `dynamicRendering` | Resource-free barriers and rendering without render-pass or framebuffer objects. |
@@ -263,6 +264,9 @@ There are no timestamp GPU copies, resolve barriers, or additional waits. Destin
 Unread results are discarded on pool reset; unsubmitted buffers are ignored. Markers are valid inside each rendering segment,
 but not between suspension and resumption. Multiply unsigned tick differences by `DeviceCaps::timestamp_period_ns` to obtain nanoseconds.
 Timestamp storage follows command-pool reuse and destruction.
+`calibrate_timestamps(device)` returns one GPU tick and one host time sampled together through `VK_KHR_calibrated_timestamps`.
+The host clock is `CLOCK_MONOTONIC`, or `QueryPerformanceCounter` scaled to nanoseconds on Windows. `DeviceCaps::calibrated_timestamps`
+is false, and the call returns zeros, when the extension or one of the two time domains is missing.
 
 Command buffers are one-shot recording handles allocated from explicit command pools. End each buffer
 before submitting any subset to a selected queue. Other pools can continue recording independently.
@@ -336,6 +340,7 @@ of direct matches, Vulkan adaptations, and intentionally unsupported areas.
 [untyped-pointers]: https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_shader_untyped_pointers.html
 [address-commands]: https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_device_address_commands.html
 [unified-layouts]: https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_unified_image_layouts.html
+[calibrated-timestamps]: https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_calibrated_timestamps.html
 [mesh-shader]: https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_mesh_shader.html
 [swapchain-maintenance]: https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_swapchain_maintenance1.html
 [spirv-heap]: https://github.khronos.org/SPIRV-Registry/extensions/EXT/SPV_EXT_descriptor_heap.html

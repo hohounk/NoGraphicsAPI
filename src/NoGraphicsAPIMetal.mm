@@ -588,6 +588,7 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
             .max_push_data_size = 256,
             .texture_heap_alignment = 16384,
             .timestamp_period_ns = static_cast<float>(timebase.numer) / static_cast<float>(timebase.denom),
+            .calibrated_timestamps = true,
             .sub_texel_precision_bits = 8,
             .texture_compression_bc = device->metal.supportsBCTextureCompression,
             .texture_compression_astc = true,
@@ -1556,6 +1557,15 @@ void read_timestamps(CommandPool* pool) noexcept
             commands->timestamp_count = 0;
         }
     }
+}
+
+TimestampCalibration calibrate_timestamps(Device* device) noexcept
+{
+    assert(device && "calibrate_timestamps called with a null device");
+    MTLTimestamp cpu = 0;
+    MTLTimestamp gpu = 0;
+    [device->metal sampleTimestamps:&cpu gpuTimestamp:&gpu];
+    return {.gpu_ticks = gpu, .cpu_ns = cpu};
 }
 
 namespace

@@ -176,6 +176,13 @@ add_test(NAME test_texture_alias COMMAND test_texture_alias)
 set_tests_properties(test_texture_alias PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
 
+add_executable(test_timestamp_calibration timestamp_calibration_test.cpp)
+NoGraphicsAPI_disable_exceptions(test_timestamp_calibration)
+target_link_libraries(test_timestamp_calibration PRIVATE NoGraphicsAPI::NoGraphicsAPI)
+add_test(NAME test_timestamp_calibration COMMAND test_timestamp_calibration)
+set_tests_properties(test_timestamp_calibration PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
+
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(test_metal_resource_concurrency metal_resource_concurrency_test.cpp ${queue_family_spv})
     NoGraphicsAPI_disable_exceptions(test_metal_resource_concurrency)

@@ -523,6 +523,7 @@ using CreateComputePSOFunction = gpu::PSO* (*)(gpu::Device*, const gpu::ShaderSt
 using SubmitFunction = void (*)(gpu::Device*, const gpu::SubmitDesc&, uint32) noexcept;
 using SubmitAndPresentFunction = void (*)(gpu::Device*, const gpu::SubmitDesc&) noexcept;
 using WriteTimestampFunction = void (*)(gpu::CommandBuffer*, uint64*, gpu::Stage) noexcept;
+using CalibrateTimestampsFunction = gpu::TimestampCalibration (*)(gpu::Device*) noexcept;
 using SetTextureHeapFunction = void (*)(gpu::CommandBuffer*, gpu::TextureDescriptorHeap*) noexcept;
 using SetSamplerHeapFunction = void (*)(gpu::CommandBuffer*, gpu::SamplerDescriptorHeap*) noexcept;
 using SetViewportFunction = void (*)(gpu::CommandBuffer*, const gpu::Viewport&) noexcept;
@@ -560,6 +561,7 @@ static_assert(gpu::detail::is_same_v<decltype(&gpu::create_compute_pso), CreateC
 static_assert(gpu::detail::is_same_v<decltype(&gpu::submit), SubmitFunction>);
 static_assert(gpu::detail::is_same_v<decltype(&gpu::submit_and_present), SubmitAndPresentFunction>);
 static_assert(gpu::detail::is_same_v<decltype(&gpu::write_timestamp), WriteTimestampFunction>);
+static_assert(gpu::detail::is_same_v<decltype(&gpu::calibrate_timestamps), CalibrateTimestampsFunction>);
 static_assert(gpu::detail::is_same_v<decltype(&gpu::set_texture_descriptor_heap), SetTextureHeapFunction>);
 static_assert(gpu::detail::is_same_v<decltype(&gpu::set_sampler_descriptor_heap), SetSamplerHeapFunction>);
 static_assert(gpu::detail::is_same_v<decltype(&gpu::set_viewport), SetViewportFunction>);

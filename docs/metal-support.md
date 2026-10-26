@@ -118,6 +118,9 @@ retrieves results into CPU memory before pool reset. It adds no GPU resolve, bar
 the opportunity for overlap between frames. Outside-render markers are approximate all-commands timings;
 inside-render markers have a [known driver limitation](repro-metal-render-timestamps.md).
 
+`calibrate_timestamps(device)` samples the GPU clock and the CPU clock together through `sampleTimestamps:gpuTimestamp:`.
+The CPU value is the Metal CPU timestamp in nanoseconds. Apple does not name the clock behind it.
+
 ## References
 
 - [Metal 4 core API](https://developer.apple.com/documentation/metal/understanding-the-metal-4-core-api)
