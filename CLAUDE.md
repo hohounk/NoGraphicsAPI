@@ -35,7 +35,8 @@ result. Between syncs, a topic gains new commits only.
 - Make every NoGraphicsAPI change in this checkout. Never edit a FetchContent
   copy such as `.deps/` of a consumer.
 - This checkout stays on `integration`.
-- A fix goes on its topic branch, in a worktree under `.worktrees/`. Then the
+- A fix goes on its topic branch, in a worktree under `.worktrees/`. Give a
+  new worktree its compile database, see "clangd" below. Then the
   topic merges into `integration` with `--no-ff`, in this checkout. A conflict
   in that merge is resolved on the topic and the merge is repeated: the next
   upstream sync drops `integration` and replays the topics, so a resolution
@@ -134,6 +135,31 @@ it here.
 4. Replace `integration` with the new `main`. Merge the queue branches with
    `--no-ff` in the same order. Run the gate.
 5. Consumers move their pin to the new `integration` SHA.
+
+## clangd
+
+clangd reads `compile_commands.json` from the nearest ancestor directory of
+the open file. A worktree under `.worktrees/` without its own falls through
+to the one of the main checkout, whose entries name the files of the main
+checkout. Then clangd resolves every include against the wrong tree. Give
+the main checkout and every worktree its own. Run this from the root of
+that checkout. Upstream's `.gitignore` already ignores `/build*/` and
+`/compile_commands.json`.
+
+```bash
+F=(-G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ "-DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++ -lc++abi")
+cmake -S . -B build-clangd "${F[@]}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DNOGRAPHICSAPI_BUILD_TESTS=ON -DNOGRAPHICSAPI_BUILD_EXAMPLES=ON > /tmp/nga-clangd.cfg 2>&1 \
+  && ln -sfn build-clangd/compile_commands.json compile_commands.json; echo "clangd=$?"
+```
+
+The configure step is enough. No build is needed. Run it again when a
+change to a `CMakeLists.txt` adds or removes a source file. Check: this
+command prints nothing. `clangd --check` also reports failed refactoring
+tweaks as errors, and the pattern keeps only the diagnostics.
+
+```bash
+clangd --check=src/NoGraphicsAPI.cpp 2>&1 | grep -E '^E\[[^]]*\] \['
+```
 
 ## Issue tracking
 
