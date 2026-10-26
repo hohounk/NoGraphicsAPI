@@ -40,6 +40,8 @@ char diagnostic[2048]{};
 uint32 instance_layers = 0;
 bool hide_khr_swapchain_maintenance1 = false;
 uint32 hidden_extensions = 0;
+char instance_extension_names[16][VK_MAX_EXTENSION_NAME_SIZE]{};
+uint32 instance_extension_count = 0;
 
 VkResult enumerate_extensions(gpu::Span<const char* const> names, uint32* count, VkExtensionProperties* values) noexcept
 {
@@ -150,6 +152,9 @@ bool inject(const char* operation) noexcept
 VkResult VKAPI_CALL test_vkCreateInstance(const VkInstanceCreateInfo* info, const VkAllocationCallbacks* allocator, VkInstance* instance)
 {
     instance_layers = info->enabledLayerCount;
+    instance_extension_count = info->enabledExtensionCount < 16 ? info->enabledExtensionCount : 16;
+    for (uint32 index = 0; index < instance_extension_count; ++index)
+        snprintf(instance_extension_names[index], VK_MAX_EXTENSION_NAME_SIZE, "%s", info->ppEnabledExtensionNames[index]);
     if (inject("vkCreateInstance")) return failure_result;
     const VkResult result = vkCreateInstance(info, allocator, instance);
     if (result == VK_SUCCESS) ++live.instances;
@@ -678,6 +683,22 @@ void wsi_failures() noexcept
     const gpu::DeviceInit init = gpu::create_device({.create_surface = create_no_surface});
     check(!init.device && init.error == gpu::Error::unsupported && reports == 1 && !reported_fatal && strstr(diagnostic, "returned no Vulkan surface"),
         "a create_surface callback without a surface reports why presentation is unsupported");
+    unchanged(before);
+    // Names the device enables on its own may repeat in instance_extensions. Each name reaches vkCreateInstance once.
+    const char* repeated[3]{VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME};
+    uint32 repeated_count = 2;
+    if (instance_extension_available(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) repeated[repeated_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    arm(nullptr);
+    const gpu::DeviceInit repeated_init =
+        gpu::create_device({.instance_extensions = repeated, .instance_extension_count = repeated_count, .create_surface = create_no_surface});
+    check(!repeated_init.device && reports == 1 && strstr(diagnostic, "returned no Vulkan surface"), "instance creation succeeds with repeated instance_extensions");
+    for (uint32 name = 0; name < repeated_count; ++name)
+    {
+        uint32 occurrences = 0;
+        for (uint32 index = 0; index < instance_extension_count; ++index)
+            if (strcmp(instance_extension_names[index], repeated[name]) == 0) ++occurrences;
+        check(occurrences == 1, "a repeated instance extension name reaches vkCreateInstance once");
+    }
     unchanged(before);
 }
 

@@ -177,6 +177,16 @@ bool has_name(Span<const VkExtensionProperties> values, const char* name)
     return false;
 }
 
+bool has_name(Span<const char* const> values, const char* name)
+{
+    for (size_t index = 0; index < values.size; ++index)
+    {
+        if (strcmp(values.data[index], name) == 0)
+            return true;
+    }
+    return false;
+}
+
 #if !defined(NDEBUG)
 bool has_name(Span<const VkLayerProperties> values, const char* name)
 {
@@ -1831,7 +1841,7 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
             enabled_instance_extensions[enabled_instance_extension_count++] = VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
         assert(desc.instance_extension_count <= 8 && "at most eight WSI instance extensions");
         for (uint32 index = 0; index < desc.instance_extension_count; ++index)
-            if (strcmp(desc.instance_extensions[index], VK_KHR_SURFACE_EXTENSION_NAME) != 0)
+            if (!has_name({enabled_instance_extensions, enabled_instance_extension_count}, desc.instance_extensions[index]))
                 enabled_instance_extensions[enabled_instance_extension_count++] = desc.instance_extensions[index];
     }
 
