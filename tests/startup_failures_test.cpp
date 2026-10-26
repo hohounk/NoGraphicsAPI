@@ -54,11 +54,18 @@ VkResult VKAPI_CALL test_vkEnumerateDeviceExtensionProperties(VkPhysicalDevice p
     if (advertised_device_extensions.data && (!reject_first_device_only || device_extension_queries++ == 0))
         return enumerate_extensions(advertised_device_extensions, count, values);
     const VkResult result = vkEnumerateDeviceExtensionProperties(physical, layer, count, values);
-    if (hide_address_commands && values && result == VK_SUCCESS)
+    if (values && result == VK_SUCCESS && (hide_address_commands || hide_khr_swapchain_maintenance1))
     {
         uint32 written = 0;
         for (uint32 index = 0; index < *count; ++index)
-            if (strcmp(values[index].extensionName, VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME)) values[written++] = values[index];
+        {
+            const bool drop_address = hide_address_commands &&
+                !strcmp(values[index].extensionName, VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME);
+            const bool drop_maintenance = hide_khr_swapchain_maintenance1 &&
+                !strcmp(values[index].extensionName, VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+            if (drop_maintenance) ++hidden_extensions;
+            if (!drop_address && !drop_maintenance) values[written++] = values[index];
+        }
         *count = written;
     }
     return result;
@@ -164,21 +171,6 @@ VkResult VKAPI_CALL test_vkAllocateCommandBuffers(VkDevice device, const VkComma
     return result;
 }
 
-// Simulates a driver that exposes only VK_EXT_swapchain_maintenance_1.
-VkResult VKAPI_CALL test_vkEnumerateDeviceExtensionProperties(VkPhysicalDevice physical, const char* layer, uint32* count, VkExtensionProperties* values)
-{
-    const VkResult result = vkEnumerateDeviceExtensionProperties(physical, layer, count, values);
-    if (!hide_khr_swapchain_maintenance1 || !values || result != VK_SUCCESS) return result;
-    uint32 kept = 0;
-    for (uint32 index = 0; index < *count; ++index)
-    {
-        if (strcmp(values[index].extensionName, VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)) values[kept++] = values[index];
-        else ++hidden_extensions;
-    }
-    *count = kept;
-    return result;
-}
-
 void VKAPI_CALL test_vkFreeCommandBuffers(VkDevice device, VkCommandPool pool, uint32 count, const VkCommandBuffer* commands)
 {
     command_frees += count;
@@ -220,7 +212,6 @@ void VKAPI_CALL test_vkFreeCommandBuffers(VkDevice device, VkCommandPool pool, u
 #define vkFreeCommandBuffers test_vkFreeCommandBuffers
 #define vkDestroyQueryPool test_vkDestroyQueryPool
 #define vkDestroyPipeline test_vkDestroyPipeline
-#define vkEnumerateDeviceExtensionProperties test_vkEnumerateDeviceExtensionProperties
 #include "../src/NoGraphicsAPI.cpp"
 
 namespace
