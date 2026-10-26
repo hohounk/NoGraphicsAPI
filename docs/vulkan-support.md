@@ -260,6 +260,9 @@ There are no timestamp GPU copies, resolve barriers, or additional waits. Destin
 Unread results are discarded on pool reset; unsubmitted buffers are ignored. Markers are valid inside each rendering segment,
 but not between suspension and resumption. Multiply unsigned tick differences by `DeviceCaps::timestamp_period_ns` to obtain nanoseconds.
 Timestamp storage follows command-pool reuse and destruction.
+`calibrate_timestamps(device)` returns one GPU tick and one host time sampled together through `VK_KHR_calibrated_timestamps`
+or `VK_EXT_calibrated_timestamps`. The host clock is `CLOCK_MONOTONIC` on Linux and `QueryPerformanceCounter`, scaled to nanoseconds,
+on Windows. `DeviceCaps::calibrated_timestamps` is false, and the call returns zeros, when the extension or one of the two time domains is missing.
 
 Command buffers are one-shot recording handles allocated from explicit command pools. End each buffer
 before submitting any subset to a selected queue. Other pools can continue recording independently.
