@@ -35,11 +35,6 @@ namespace
 thread_local ErrorCallback error_callback = nullptr;
 
 constexpr uint32 max_device_extensions = 512;
-#if defined(_WIN32)
-constexpr VkTimeDomainKHR host_time_domain = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR;
-#else
-constexpr VkTimeDomainKHR host_time_domain = VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR;
-#endif
 constexpr uint32 max_instance_extensions = 256;
 constexpr uint32 max_instance_layers = 64;
 constexpr uint32 max_physical_devices = 32;
@@ -51,6 +46,16 @@ constexpr VkPresentModeKHR swapchain_present_mode = VK_PRESENT_MODE_FIFO_KHR;
 constexpr uint32 gpu_allocation_alignment = 16;
 constexpr uint32 max_surface_formats = 64;
 constexpr uint32 format_count = static_cast<uint32>(Format::undefined);
+constexpr uint32 max_time_domains = 8; // The Vulkan specification defines four.
+#if defined(_WIN32)
+constexpr VkTimeDomainKHR host_time_domain = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR;
+#else
+constexpr VkTimeDomainKHR host_time_domain = VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR;
+#endif
+constexpr VkCalibratedTimestampInfoKHR calibration_infos[2]{
+    {.sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR, .timeDomain = VK_TIME_DOMAIN_DEVICE_KHR},
+    {.sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR, .timeDomain = host_time_domain},
+};
 
 enum class DescriptorHeapType : uint8
 {
@@ -514,7 +519,7 @@ struct DeviceFunctions
     PFN_vkCmdCopyMemoryKHR cmd_copy_memory = nullptr;
     PFN_vkCmdCopyMemoryToImageKHR cmd_copy_memory_to_image = nullptr;
     PFN_vkCmdCopyImageToMemoryKHR cmd_copy_image_to_memory = nullptr;
-    // Null without VK_KHR_calibrated_timestamps or VK_EXT_calibrated_timestamps.
+    // Null without VK_KHR_calibrated_timestamps.
     PFN_vkGetCalibratedTimestampsKHR get_calibrated_timestamps = nullptr;
 };
 
@@ -697,9 +702,6 @@ struct Device
     uint32 queue_families[queue_type_count]{};
     uint32 queue_family_count = 0;
     uint32 timestamp_query_count = 0;
-#if defined(_WIN32)
-    uint64 host_clock_frequency = 1; // QueryPerformanceFrequency, for calibrate_timestamps.
-#endif
     VkPhysicalDeviceMemoryProperties memory_properties{};
     VkPhysicalDeviceProperties physical_properties{};
     VkPhysicalDeviceDescriptorHeapPropertiesEXT heap_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
@@ -1508,7 +1510,7 @@ struct Candidate
     bool texture_compression_etc2 = false;
     bool storage_input_output16 = false;
     bool khr_swapchain_maintenance1 = false;
-    const char* calibrated_timestamps_extension = nullptr; // Enabled when the device and host time domains are both available.
+    bool calibrated_timestamps = false;
     VkPhysicalDeviceDescriptorHeapPropertiesEXT heap_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT};
     VkPhysicalDeviceVulkan12Properties vulkan12_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
     const char* missing_extensions[5]{};
@@ -1528,8 +1530,8 @@ void append_capability_diagnostic(Span<char> message, const char* subject, Span<
     }
 }
 
-Error inspect_candidate(VkInstance instance, VkPhysicalDevice physical_device, VkSurfaceKHR surface, bool khr_surface_maintenance1,
-                        bool ext_surface_maintenance1, const DeviceDesc& desc, Candidate& output) noexcept
+Error inspect_candidate(VkPhysicalDevice physical_device, VkSurfaceKHR surface, bool khr_surface_maintenance1, bool ext_surface_maintenance1,
+                        const DeviceDesc& desc, Candidate& output) noexcept
 {
     VkExtensionProperties extensions[max_device_extensions]{};
     uint32 extension_count = 0;
@@ -1576,29 +1578,6 @@ Error inspect_candidate(VkInstance instance, VkPhysicalDevice physical_device, V
     result.vulkan12_properties.pNext = nullptr;
     if (result.properties.apiVersion < VK_API_VERSION_1_4)
         return Error::unsupported;
-
-    const bool khr_calibrated_timestamps = has_name({extensions, extension_count}, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
-    const bool ext_calibrated_timestamps = !khr_calibrated_timestamps && has_name({extensions, extension_count}, VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
-    if (khr_calibrated_timestamps || ext_calibrated_timestamps)
-    {
-        const PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR get_time_domains = load_instance_proc<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR>(
-            instance, khr_calibrated_timestamps ? "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR" : "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT");
-        VkTimeDomainKHR domains[8]{};
-        uint32 domain_count = 8;
-        bool device_domain = false;
-        bool host_domain = false;
-        if (get_time_domains && get_time_domains(physical_device, &domain_count, domains) == VK_SUCCESS)
-        {
-            for (uint32 index = 0; index < domain_count; ++index)
-            {
-                device_domain = device_domain || domains[index] == VK_TIME_DOMAIN_DEVICE_KHR;
-                host_domain = host_domain || domains[index] == host_time_domain;
-            }
-        }
-        if (device_domain && host_domain)
-            result.calibrated_timestamps_extension =
-                khr_calibrated_timestamps ? VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME : VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
-    }
 
     vkGetPhysicalDeviceMemoryProperties(physical_device, &result.memory_properties);
     bool cpu_visible_memory = false;
@@ -1656,6 +1635,7 @@ Error inspect_candidate(VkInstance instance, VkPhysicalDevice physical_device, V
     result.texture_compression_etc2 = features.core.features.textureCompressionETC2 == VK_TRUE;
     result.storage_input_output16 = features.vulkan11.storageInputOutput16 == VK_TRUE;
     result.khr_swapchain_maintenance1 = khr_swapchain_maintenance1;
+    result.calibrated_timestamps = has_name({extensions, extension_count}, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
 
     uint32 available_queue_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &available_queue_count, nullptr);
@@ -1913,7 +1893,7 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
     {
         const VkPhysicalDevice physical_device = physical_devices[index];
         Candidate candidate{};
-        error = inspect_candidate(state->instance, physical_device, state->surface, khr_surface_maintenance1, ext_surface_maintenance1, desc, candidate);
+        error = inspect_candidate(physical_device, state->surface, khr_surface_maintenance1, ext_surface_maintenance1, desc, candidate);
         if (error == Error::unsupported)
         {
             if (error_callback)
@@ -2012,6 +1992,25 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
         };
         first_queue += queue_counts[type];
     }
+    bool calibrated_timestamps = false;
+    if (selected.calibrated_timestamps)
+    {
+        const PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR get_time_domains =
+            load_instance_proc<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR>(state->instance, "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR");
+        VkTimeDomainKHR domains[max_time_domains]{};
+        uint32 domain_count = max_time_domains;
+        bool device_domain = false;
+        bool host_domain = false;
+        if (get_time_domains && get_time_domains(state->physical_device, &domain_count, domains) == VK_SUCCESS)
+        {
+            for (uint32 index = 0; index < domain_count; ++index)
+            {
+                device_domain |= domains[index] == VK_TIME_DOMAIN_DEVICE_KHR;
+                host_domain |= domains[index] == host_time_domain;
+            }
+        }
+        calibrated_timestamps = device_domain && host_domain;
+    }
     const char* enabled_device_extensions[8]{};
     uint32 enabled_device_extension_count = 0;
     enabled_device_extensions[enabled_device_extension_count++] = VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME;
@@ -2022,7 +2021,7 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
         enabled_device_extensions[enabled_device_extension_count++] = VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME;
     }
     enabled_device_extensions[enabled_device_extension_count++] = VK_EXT_MESH_SHADER_EXTENSION_NAME;
-    if (selected.calibrated_timestamps_extension) enabled_device_extensions[enabled_device_extension_count++] = selected.calibrated_timestamps_extension;
+    if (calibrated_timestamps) enabled_device_extensions[enabled_device_extension_count++] = VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
 #if defined(_WIN32)
     if (presentation)
     {
@@ -2094,17 +2093,8 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
             return fail_device_creation(state, Error::driver_error, "The graphics driver did not provide vkCmdDrawMeshTasksIndirectEXT.");
         state->buffer_map = new detail::BufferAddressMap{};
     }
-    if (selected.calibrated_timestamps_extension)
-    {
-        state->fn.get_calibrated_timestamps = load_device_proc<PFN_vkGetCalibratedTimestampsKHR>(state->device,
-            strcmp(selected.calibrated_timestamps_extension, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) == 0
-                ? "vkGetCalibratedTimestampsKHR" : "vkGetCalibratedTimestampsEXT");
-#if defined(_WIN32)
-        LARGE_INTEGER frequency{};
-        QueryPerformanceFrequency(&frequency);
-        state->host_clock_frequency = static_cast<uint64>(frequency.QuadPart);
-#endif
-    }
+    if (calibrated_timestamps)
+        state->fn.get_calibrated_timestamps = load_device_proc<PFN_vkGetCalibratedTimestampsKHR>(state->device, "vkGetCalibratedTimestampsKHR");
 
     if (presentation)
     {
@@ -3365,15 +3355,13 @@ TimestampCalibration calibrate_timestamps(Device* device) noexcept
 {
     assert(device && "calibrate_timestamps called with a null device");
     if (!device->fn.get_calibrated_timestamps) return {};
-    const VkCalibratedTimestampInfoKHR infos[2]{
-        {.sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR, .timeDomain = VK_TIME_DOMAIN_DEVICE_KHR},
-        {.sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR, .timeDomain = host_time_domain},
-    };
     uint64 timestamps[2]{};
     uint64 max_deviation = 0;
-    if (device->fn.get_calibrated_timestamps(device->device, 2, infos, timestamps, &max_deviation) != VK_SUCCESS) return {};
+    if (device->fn.get_calibrated_timestamps(device->device, 2, calibration_infos, timestamps, &max_deviation) != VK_SUCCESS) return {};
 #if defined(_WIN32)
-    const uint64 rate = device->host_clock_frequency;
+    LARGE_INTEGER frequency{};
+    QueryPerformanceFrequency(&frequency);
+    const uint64 rate = static_cast<uint64>(frequency.QuadPart);
     timestamps[1] = timestamps[1] / rate * 1000000000ull + timestamps[1] % rate * 1000000000ull / rate;
 #endif
     return {.gpu_ticks = timestamps[0], .cpu_ns = timestamps[1]};
