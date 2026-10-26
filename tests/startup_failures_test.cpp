@@ -497,23 +497,33 @@ void surface_format_failures(gpu::Device* device) noexcept
     struct Case
     {
         uint32 counts[2];
+        gpu::Format format = gpu::Format::bgra8_srgb;
+        VkColorSpaceKHR color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+        uint32 queries = 1;
         gpu::Error error;
         const char* message;
     };
     const Case cases[]{
-        {{14, 28}, gpu::Error::none, "a format list that grows after the first query keeps the swapchain setup"},
-        {{28, 14}, gpu::Error::none, "a format list that shrinks after the first query keeps the swapchain setup"},
-        {{65, 65}, gpu::Error::unsupported, "more formats than the wrapper holds reject the surface"},
+        {.counts = {14, 28}, .error = gpu::Error::none, .message = "a format list that grows after the first query keeps the swapchain setup"},
+        {.counts = {28, 14}, .error = gpu::Error::none, .message = "a format list that shrinks after the first query keeps the swapchain setup"},
+        {.counts = {65, 65}, .error = gpu::Error::unsupported, .message = "more formats than the wrapper holds reject the surface"},
+        {.counts = {14, 28}, .format = gpu::Format::rgba16_float, .color_space = VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT, .queries = 2,
+            .error = gpu::Error::none, .message = "a color space missing from a short first list is found by a second query"},
+        {.counts = {14, 14}, .format = gpu::Format::rgba16_float, .color_space = VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT, .queries = 3,
+            .error = gpu::Error::unsupported, .message = "a color space the surface never lists is unsupported after bounded queries"},
     };
     for (const Case& test : cases)
     {
         gpu::Swapchain swapchain;
         swapchain.state = device;
+        swapchain.format = test.format;
+        swapchain.color_space = test.color_space;
         surface_format_counts = test.counts;
         surface_format_queries = 0;
         arm(nullptr);
         const gpu::Error error = gpu::recreate_swapchain(swapchain);
         check(error == test.error && reports == 0, test.message);
+        check(surface_format_queries == test.queries, "the surface format query count matches the case");
         check(error != gpu::Error::none || swapchain.recreate_required, "a zero surface extent defers the swapchain");
         surface_format_counts = {};
     }

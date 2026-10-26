@@ -45,6 +45,7 @@ constexpr uint32 max_swapchain_images = 8;
 constexpr VkPresentModeKHR swapchain_present_mode = VK_PRESENT_MODE_FIFO_KHR;
 constexpr uint32 gpu_allocation_alignment = 16;
 constexpr uint32 max_surface_formats = 64;
+constexpr uint32 max_surface_format_queries = 3;
 constexpr uint32 format_count = static_cast<uint32>(Format::undefined);
 
 enum class DescriptorHeapType : uint8
@@ -2340,26 +2341,26 @@ Error recreate_swapchain(Swapchain& swapchain) noexcept
         return Error::unsupported;
     }
 
-    // One query: the format count can change between a count query and a fill query.
-    VkSurfaceFormatKHR formats[max_surface_formats]{};
-    uint32 surface_format_count = max_surface_formats;
-    const VkResult format_result = vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical_device, device.surface, &surface_format_count, formats);
-    error = format_result == VK_INCOMPLETE ? Error::unsupported : error_from_vk(format_result, "vkGetPhysicalDeviceSurfaceFormatsKHR");
-    if (error != Error::none)
-        return error;
-    if (surface_format_count == 0)
-        return Error::unsupported;
-
+    // One query: the format count can change between a count query and a fill query. A driver can also return a short list
+    // that lacks the extended color spaces, so a missing pair queries again a bounded number of times.
     const VkFormat requested_format = to_vk(swapchain.format);
     bool format_supported = false;
-    for (uint32 index = 0; index < surface_format_count; ++index)
+    for (uint32 query = 0; query < max_surface_format_queries && !format_supported; ++query)
     {
-        if ((formats[index].format == requested_format ||
-             formats[index].format == VK_FORMAT_UNDEFINED) &&
-            formats[index].colorSpace == swapchain.color_space)
+        VkSurfaceFormatKHR formats[max_surface_formats]{};
+        uint32 surface_format_count = max_surface_formats;
+        const VkResult format_result = vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical_device, device.surface, &surface_format_count, formats);
+        error = format_result == VK_INCOMPLETE ? Error::unsupported : error_from_vk(format_result, "vkGetPhysicalDeviceSurfaceFormatsKHR");
+        if (error != Error::none)
+            return error;
+        for (uint32 index = 0; index < surface_format_count; ++index)
         {
-            format_supported = true;
-            break;
+            if ((formats[index].format == requested_format || formats[index].format == VK_FORMAT_UNDEFINED) &&
+                formats[index].colorSpace == swapchain.color_space)
+            {
+                format_supported = true;
+                break;
+            }
         }
     }
     if (!format_supported)
