@@ -6,8 +6,9 @@
 
 // Dear ImGui renderer backend over NoGraphicsAPI, Vulkan only. It sets RendererHasTextures and RendererHasVtxOffset.
 // ImTextureID is the slot of the texture in the backend's texture descriptor heap. Slot 0 stays empty, because 0 is ImTextureID_Invalid.
-// Call NewFrame once for each submitted frame, with at most framesInFlight frames in flight: a texture that ImGui
-// wants destroyed is destroyed when its UnusedFrames reaches framesInFlight.
+// Build an ImGui frame (ImGui::NewFrame to RenderDrawData) only for a frame that you submit, with at most framesInFlight frames
+// in flight: ImGui counts each built frame in UnusedFrames, and a texture that ImGui wants destroyed is destroyed when its
+// UnusedFrames reaches framesInFlight.
 struct ImGui_ImplNoGraphicsAPI_InitInfo
 {
     gpu::Device* device = nullptr;
@@ -28,6 +29,7 @@ IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* data, gpu
 
 // Record inside a render pass on a color target of InitInfo::colorFormat, after UpdateTextures. One draw_indexed for each ImDrawCmd.
 // The bytes come from bump: TotalVtxCount * 20 bytes of vertices, TotalIdxCount * sizeof(ImDrawIdx) bytes of indices, and 32 bytes
-// for each root, each allocation rounded up to 16 bytes. A new root starts when the texture or the vertex offset changes.
-// It leaves the backend PSO, the backend texture and sampler descriptor heaps and the last scissor bound.
+// for each root, each allocation rounded up to 16 bytes. A new root starts when the texture or the vertex pointer changes.
+// It sets the viewport to the framebuffer size, and leaves that viewport, the backend PSO, the backend texture and sampler
+// descriptor heaps and the last scissor bound.
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump);
