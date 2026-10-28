@@ -45,9 +45,11 @@ Do not reset or reuse that memory until the GPU completes the frame.
 
 | Call | Bytes |
 | --- | --- |
-| `UpdateTextures` | `width * height * 4` for each new texture, and `w * h * 4` for each rect of a texture update |
+| `UpdateTextures` | `width * height * 4` for each new texture, and the bytes of each texture update |
 | `RenderDrawData` | `TotalVtxCount * 20` of vertices, `TotalIdxCount * sizeof(ImDrawIdx)` of indices, and 40 for each root |
 
+A texture update costs `UpdateRect.w * UpdateRect.h * 4` when its rects cover at least half of `UpdateRect`,
+and `w * h * 4` for each rect otherwise.
 Each allocation rounds up to 16 bytes. The largest single need is a new font atlas.
 When ImGui grows the atlas, it asks for a new texture of the larger size.
 An allocation that does not fit is a programmer error, and the backend asserts.

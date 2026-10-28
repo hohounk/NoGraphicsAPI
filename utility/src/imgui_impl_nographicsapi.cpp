@@ -258,7 +258,13 @@ void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandB
                                        gpu::Stage::transfer, gpu::Access::transfer_write);
             updated = true;
             gpu::Texture* destination = data->slots[uint32(texture->TexID)].texture;
-            for (const ImTextureRect& rect : texture->Updates) upload_rect(commands, bump, destination, texture, rect);
+            // One upload of UpdateRect, the bounding box, replaces one per rect when the rects cover at least half of it.
+            uint64 rect_texels = 0;
+            for (const ImTextureRect& rect : texture->Updates) rect_texels += uint64(rect.w) * rect.h;
+            if (rect_texels && uint64(texture->UpdateRect.w) * texture->UpdateRect.h <= 2 * rect_texels)
+                upload_rect(commands, bump, destination, texture, texture->UpdateRect);
+            else
+                for (const ImTextureRect& rect : texture->Updates) upload_rect(commands, bump, destination, texture, rect);
             texture->SetStatus(ImTextureStatus_OK);
             copied = true;
         }
