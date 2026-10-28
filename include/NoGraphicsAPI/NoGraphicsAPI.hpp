@@ -165,6 +165,7 @@ struct TextureFormatInfo
     uint32 bytes_per_block = 0;
     bool depth = false;
     bool stencil = false;
+    bool srgb = false;
 };
 
 [[nodiscard]] constexpr TextureFormatInfo get_texture_format_info(Format format) noexcept
@@ -180,6 +181,7 @@ struct TextureFormatInfo
             .bytes_per_block = 1,
             .depth = false,
             .stencil = format == Format::s8_uint,
+            .srgb = format == Format::r8_srgb,
         };
     case Format::rg8_srgb:
     case Format::rgba4_unorm:
@@ -196,6 +198,7 @@ struct TextureFormatInfo
             .bytes_per_block = 2,
             .depth = format == Format::d16_unorm,
             .stencil = false,
+            .srgb = format == Format::rg8_srgb,
         };
     case Format::rgba8_srgb:
     case Format::bgra8_srgb:
@@ -217,6 +220,7 @@ struct TextureFormatInfo
             .bytes_per_block = 4,
             .depth = format == Format::d24_unorm_s8_uint || format == Format::d32_float,
             .stencil = format == Format::d24_unorm_s8_uint,
+            .srgb = format == Format::rgba8_srgb || format == Format::bgra8_srgb,
         };
     case Format::rgba16_unorm:
     case Format::rgba16_uint:
@@ -249,6 +253,7 @@ struct TextureFormatInfo
         return {
             .block_extent = {.x = 4, .y = 4},
             .bytes_per_block = 16,
+            .srgb = format == Format::astc_4x4_srgb || format == Format::bc3_srgb || format == Format::bc7_srgb,
         };
     case Format::undefined: return {};
     }

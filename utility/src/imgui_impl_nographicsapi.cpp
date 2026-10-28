@@ -132,8 +132,7 @@ bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_InitInfo* info)
         .slots = new TextureSlot[info->maxTextures + 1]{},
         .max_textures = info->maxTextures,
         .frames_in_flight = info->framesInFlight,
-        .srgb = info->colorFormat == gpu::Format::r8_srgb || info->colorFormat == gpu::Format::rg8_srgb || info->colorFormat == gpu::Format::rgba8_srgb ||
-                info->colorFormat == gpu::Format::bgra8_srgb,
+        .srgb = gpu::get_texture_format_info(info->colorFormat).srgb,
     };
 
     io.BackendRendererUserData = data;

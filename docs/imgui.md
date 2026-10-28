@@ -79,10 +79,10 @@ add `ImGui::GetPlatformIO().DrawCallback_ResetRenderState` after it. This callba
 
 ## sRGB targets
 
-ImGui colors are sRGB values. With a `colorFormat` of `r8_srgb`, `rg8_srgb`, `rgba8_srgb` or `bgra8_srgb`,
+ImGui colors are sRGB values. With an `_srgb` `colorFormat`, for which `get_texture_format_info(format).srgb` is true,
 the vertex shader converts the vertex colors to linear.
 The target converts them back when it writes, so the pixels have the ImGui color values.
-Only these four formats get the conversion. Other formats, float formats such as `rgba16_float` included, get the sRGB values unchanged.
+Other formats, float formats such as `rgba16_float` included, get the sRGB values unchanged.
 On a linear target, for example an `rgba16_float` swapchain in the extended sRGB linear color space, the colors thus show lighter than in ImGui.
 The conversion applies to vertex colors only. On an `_srgb` target, an `ImGui::Image` shows lighter than its texel bytes,
 because the backend samples textures as `rgba8_unorm`.

@@ -276,6 +276,31 @@ constexpr bool valid_texture_formats() noexcept
 
 static_assert(texture_format_count == static_cast<uint8>(gpu::Format::undefined));
 static_assert(valid_texture_formats());
+
+constexpr const char* texture_format_names[] = {
+    "r8_srgb", "rg8_srgb", "rgba8_srgb", "bgra8_srgb", "rgba4_unorm", "r5g5b5a1_unorm", "r5g6b5_unorm", "r8_unorm", "rg8_unorm", "rgba8_unorm",
+    "bgra8_unorm", "r16_unorm", "rg16_unorm", "rgba16_unorm", "r8_uint", "rg8_uint", "rgba8_uint", "bgra8_uint", "r16_uint", "rg16_uint",
+    "rgba16_uint", "r32_uint", "rg32_uint", "rgba32_uint", "r16_float", "rg16_float", "rgba16_float", "r32_float", "rg32_float", "rgba32_float",
+    "rgb10a2_unorm", "rg11b10_float", "d16_unorm", "d24_unorm_s8_uint", "d32_float", "s8_uint", "d32_float_s8_uint", "eac_rg", "astc_4x4_srgb",
+    "astc_4x4_unorm", "bc3_srgb", "bc3_unorm", "bc5_rg", "bc6h_ufloat", "bc6h_sfloat", "bc7_srgb", "bc7_unorm",
+};
+static_assert(sizeof(texture_format_names) / sizeof(texture_format_names[0]) == texture_format_count);
+
+constexpr bool ends_with_srgb(const char* name) noexcept
+{
+    size_t length = 0;
+    while (name[length]) ++length;
+    return length >= 5 && name[length - 5] == '_' && name[length - 4] == 's' && name[length - 3] == 'r' && name[length - 2] == 'g' && name[length - 1] == 'b';
+}
+
+constexpr bool srgb_matches_format_names() noexcept
+{
+    for (size_t index = 0; index < texture_format_count; ++index)
+        if (gpu::get_texture_format_info(texture_formats[index]).srgb != ends_with_srgb(texture_format_names[index])) return false;
+    return true;
+}
+static_assert(srgb_matches_format_names());
+
 static_assert(gpu::get_texture_format_info(gpu::Format::rgba8_unorm).bytes_per_block == 4);
 static_assert(gpu::get_texture_format_info(gpu::Format::astc_4x4_unorm).block_extent.x == 4);
 static_assert(gpu::get_texture_format_info(gpu::Format::bc6h_ufloat).block_extent.x == 4 &&
@@ -311,7 +336,8 @@ static_assert(sizeof(gpu::uint32x3) == 12 && alignof(gpu::uint32x3) == 4 &&
 static_assert(sizeof(gpu::TextureFormatInfo) == 16 &&
               offsetof(gpu::TextureFormatInfo, block_extent) == 0 &&
               offsetof(gpu::TextureFormatInfo, bytes_per_block) == 8 &&
-              offsetof(gpu::TextureFormatInfo, stencil) == 13);
+              offsetof(gpu::TextureFormatInfo, stencil) == 13 &&
+              offsetof(gpu::TextureFormatInfo, srgb) == 14);
 static_assert(sizeof(gpu::SwapchainFrame) == 16 && offsetof(gpu::SwapchainFrame, extent) == 8);
 static_assert(sizeof(gpu::TextureDesc) == 32 && offsetof(gpu::TextureDesc, extent) == 4 && offsetof(gpu::TextureDesc, usage) == 28);
 static_assert(sizeof(gpu::TextureCopyDesc) == 56 && offsetof(gpu::TextureCopyDesc, offset) == 12 &&
