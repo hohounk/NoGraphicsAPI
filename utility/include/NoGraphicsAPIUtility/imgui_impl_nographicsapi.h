@@ -32,7 +32,8 @@ IMGUI_IMPL_API ImTextureID ImGui_ImplNoGraphicsAPI_AddTexture(gpu::Texture* text
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_RemoveTexture(ImTextureID id);
 // Record outside a render pass, before RenderDrawData. Creates, updates and destroys the textures of data->Textures.
 // The staging bytes come from bump: a new texture costs width * height * 4 bytes. A texture update costs UpdateRect.w * UpdateRect.h * 4
-// bytes when the sum of the areas of its rects is at least half the area of UpdateRect, and w * h * 4 bytes for each rect otherwise. Each allocation rounds up to 16 bytes.
+// bytes when the sum of the areas of its rects is at least half the area of UpdateRect, and w * h * 4 bytes for each rect otherwise.
+// Each allocation rounds up to 16 bytes.
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump);
 
 // Record inside a render pass on a color target of InitInfo::colorFormat, after UpdateTextures. One draw_indexed for each ImDrawCmd.
