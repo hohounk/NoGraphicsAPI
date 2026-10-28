@@ -656,16 +656,22 @@ void validation_disabled() noexcept
     unchanged(before);
 }
 
-// Returns 77 when no GPU presents to the surface.
-int present_frames(const char* const* extensions, VkSurfaceKHR_T* (*create_surface)(VkInstance_T*, void*), TestWindow& window, bool fixed_extent) noexcept
+// Returns false when no GPU presents to the surface.
+bool present_frames(const char* name, const char* const* extensions, VkSurfaceKHR_T* (*create_surface)(VkInstance_T*, void*), TestWindow& window,
+    bool fixed_extent) noexcept
 {
+    const uint32 earlier_failures = failures;
     window.surface_calls = window.extent_calls = 0;
     arm(nullptr);
     const gpu::DeviceInit init = gpu::create_device({.swapchain_format = gpu::Format::bgra8_srgb, .instance_extensions = extensions,
         .instance_extension_count = 2, .create_surface = create_surface, .drawable_extent = test_window_extent, .wsi_user = &window});
-    if (init.error == gpu::Error::unsupported && !strstr(diagnostic, "create_surface")) return 77;
+    if (init.error == gpu::Error::unsupported && !strstr(diagnostic, "create_surface"))
+    {
+        printf("No GPU presents to a %s surface.\n", name);
+        return false;
+    }
     check(init.device && window.surface_calls == 1, "device creation calls create_surface once with wsi_user and succeeds");
-    if (!init.device) return 1;
+    if (!init.device) return true;
     gpu::Device* device = init.device;
     gpu::CommandPool* pool = gpu::create_command_pool(device);
     gpu::TimelineSemaphore* timeline = gpu::create_timeline_semaphore(device);
@@ -694,68 +700,61 @@ int present_frames(const char* const* extensions, VkSurfaceKHR_T* (*create_surfa
     gpu::destroy_timeline_semaphore(timeline);
     gpu::destroy_command_pool(pool);
     gpu::destroy_device(device);
-    return failures ? 1 : 0;
+    printf("Linux presentation, %s surface: %u failures\n", name, failures - earlier_failures);
+    return true;
 }
 
+// Every surface that a GPU presents to runs. Headless and Wayland surfaces have no fixed extent, and an X11 window has one.
 int present_case() noexcept
 {
     gpu::set_error_callback(receive_error);
-    TestWindow window{.extent = {.x = 64, .y = 48}};
-    const char* surface = "headless";
-    int result = 77;
+    const gpu::uint32x2 initial_extent{.x = 64, .y = 48};
+    TestWindow window{.extent = initial_extent};
+    bool presented = false;
     if (instance_extension_available(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME))
-        result = present_frames(headless_extensions, create_headless_surface, window, false);
+        presented = present_frames("headless", headless_extensions, create_headless_surface, window, false);
 #if defined(NOGRAPHICSAPI_TEST_WAYLAND)
-    if (result == 77 && instance_extension_available(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME))
+    window.display = instance_extension_available(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME) ? wl_display_connect(nullptr) : nullptr;
+    if (window.display)
     {
-        window.display = wl_display_connect(nullptr);
-        if (window.display)
+        wl_registry* registry = wl_display_get_registry(window.display);
+        wl_registry_add_listener(registry, &registry_listener, &window);
+        wl_display_roundtrip(window.display);
+        if (window.compositor)
         {
-            printf("Headless presentation is unavailable; trying a Wayland surface.\n");
-            surface = "Wayland";
-            wl_registry* registry = wl_display_get_registry(window.display);
-            wl_registry_add_listener(registry, &registry_listener, &window);
-            wl_display_roundtrip(window.display);
-            if (window.compositor)
-            {
-                window.surface = wl_compositor_create_surface(window.compositor);
-                result = present_frames(wayland_extensions, create_wayland_surface, window, false);
-                wl_surface_destroy(window.surface);
-                wl_compositor_destroy(window.compositor);
-            }
-            wl_registry_destroy(registry);
-            wl_display_disconnect(window.display);
+            window.extent = initial_extent;
+            window.surface = wl_compositor_create_surface(window.compositor);
+            presented = present_frames("Wayland", wayland_extensions, create_wayland_surface, window, false) || presented;
+            wl_surface_destroy(window.surface);
+            wl_compositor_destroy(window.compositor);
         }
+        wl_registry_destroy(registry);
+        wl_display_disconnect(window.display);
     }
 #endif
 #if defined(NOGRAPHICSAPI_TEST_XCB)
-    if (result == 77 && instance_extension_available(VK_KHR_XCB_SURFACE_EXTENSION_NAME))
+    window.connection = instance_extension_available(VK_KHR_XCB_SURFACE_EXTENSION_NAME) ? xcb_connect(nullptr, nullptr) : nullptr;
+    if (window.connection && !xcb_connection_has_error(window.connection))
     {
-        printf("No headless or Wayland presentation; trying an X11 window.\n");
-        surface = "X11";
-        window.connection = xcb_connect(nullptr, nullptr);
-        if (!xcb_connection_has_error(window.connection))
-        {
-            const xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(window.connection)).data;
-            window.window = xcb_generate_id(window.connection);
-            xcb_create_window(window.connection, XCB_COPY_FROM_PARENT, window.window, screen->root, 0, 0, uint16(window.extent.x), uint16(window.extent.y), 0,
-                XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, 0, nullptr);
-            xcb_flush(window.connection);
-            result = present_frames(xcb_extensions, create_xcb_surface, window, true);
-            xcb_destroy_window(window.connection, window.window);
-        }
-        xcb_disconnect(window.connection);
+        window.extent = initial_extent;
+        const xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(window.connection)).data;
+        window.window = xcb_generate_id(window.connection);
+        xcb_create_window(window.connection, XCB_COPY_FROM_PARENT, window.window, screen->root, 0, 0, uint16(window.extent.x), uint16(window.extent.y), 0,
+            XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, 0, nullptr);
+        xcb_flush(window.connection);
+        presented = present_frames("X11", xcb_extensions, create_xcb_surface, window, true) || presented;
+        xcb_destroy_window(window.connection, window.window);
     }
+    if (window.connection) xcb_disconnect(window.connection);
 #endif
     gpu::set_error_callback(nullptr);
     unchanged({});
-    if (result == 77)
+    if (!presented)
     {
         printf("SKIP: no GPU presents to a headless, Wayland or X11 surface.\n");
         return 77;
     }
-    printf("Linux presentation, %s surface: %u failures\n", surface, failures);
-    return failures ? 1 : result;
+    return failures ? 1 : 0;
 }
 
 int validation_forwarding_case() noexcept

@@ -367,8 +367,8 @@ if(NOT APPLE)
     add_test(NAME test_startup_failures COMMAND test_startup_failures)
     set_tests_properties(test_startup_failures PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
     if(NOT WIN32)
-        # The present case falls back from a headless surface to a Wayland surface without a role when libwayland-client is found,
-        # and then to an unmapped X11 window when libxcb is found.
+        # The present case runs on every surface that a GPU presents to: a headless surface, a Wayland surface without a role
+        # when libwayland-client is found, and an unmapped X11 window when libxcb is found.
         find_path(NOGRAPHICSAPI_WAYLAND_INCLUDE_DIR wayland-client.h)
         find_library(NOGRAPHICSAPI_WAYLAND_LIBRARY wayland-client)
         if(NOGRAPHICSAPI_WAYLAND_INCLUDE_DIR AND NOGRAPHICSAPI_WAYLAND_LIBRARY)
