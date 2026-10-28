@@ -77,9 +77,13 @@ int main()
     printf("Using %s\n", gpu::get_device_caps(device).device_name);
 
     gpu::TimelineSemaphore* timeline = gpu::create_timeline_semaphore(device);
-    gpu::CommandPool* pools[frames_in_flight] = {gpu::create_command_pool(device), gpu::create_command_pool(device)};
-    const gpu::GpuHeap staging[frames_in_flight] = {gpu::create_gpu_heap(device, bump_bytes), gpu::create_gpu_heap(device, bump_bytes)};
-    gpu::BumpAllocator bumps[frames_in_flight] = {gpu::BumpAllocator(staging[0].range), gpu::BumpAllocator(staging[1].range)};
+    gpu::CommandPool* pools[frames_in_flight] = {};
+    gpu::GpuHeap staging[frames_in_flight] = {};
+    for (uint32 index = 0; index < frames_in_flight; ++index)
+    {
+        pools[index] = gpu::create_command_pool(device);
+        staging[index] = gpu::create_gpu_heap(device, bump_bytes);
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -90,7 +94,7 @@ int main()
     const ImGui_ImplNoGraphicsAPI_InitInfo init_info{.device = device, .colorFormat = swapchain_format, .framesInFlight = frames_in_flight};
     const bool initialized = ImGui_ImplNoGraphicsAPI_Init(&init_info);
 
-    // frame counts the submitted frames. Frame value v uses pools[(v - 1) % frames_in_flight] and bumps[(v - 1) % frames_in_flight].
+    // frame counts the submitted frames. Frame value v uses pools[(v - 1) % frames_in_flight] and staging[(v - 1) % frames_in_flight].
     uint64 frame = 0;
     bool running = initialized;
     while (running)
@@ -114,7 +118,7 @@ int main()
         const uint32 slot = uint32(frame % frames_in_flight);
         if (frame >= frames_in_flight) gpu::wait_timeline({.semaphore = timeline, .value = frame + 1 - frames_in_flight});
         gpu::reset_command_pool(pools[slot]);
-        bumps[slot].reset();
+        gpu::BumpAllocator bump(staging[slot].range);
         gpu::CommandBuffer* commands = gpu::begin_commands(pools[slot]);
         const gpu::SwapchainFrame swapchain = gpu::acquire(commands);
         if (!swapchain.render_view) continue;
@@ -126,11 +130,11 @@ int main()
         ImGui::Render();
         ImDrawData* draw_data = ImGui::GetDrawData();
 
-        ImGui_ImplNoGraphicsAPI_UpdateTextures(draw_data, commands, bumps[slot]);
+        ImGui_ImplNoGraphicsAPI_UpdateTextures(draw_data, commands, bump);
         gpu::begin_render_pass(commands, {
             .colors = {{.render_view = swapchain.render_view, .load = gpu::LoadOp::clear, .clear = {.x = 0.05f, .y = 0.05f, .z = 0.05f}}},
         });
-        ImGui_ImplNoGraphicsAPI_RenderDrawData(draw_data, commands, bumps[slot]);
+        ImGui_ImplNoGraphicsAPI_RenderDrawData(draw_data, commands, bump);
         gpu::end_render_pass(commands);
         gpu::end_commands(commands);
         ++frame;
@@ -141,10 +145,11 @@ int main()
     if (initialized) ImGui_ImplNoGraphicsAPI_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
-    gpu::destroy_gpu_heap(staging[1]);
-    gpu::destroy_gpu_heap(staging[0]);
-    gpu::destroy_command_pool(pools[1]);
-    gpu::destroy_command_pool(pools[0]);
+    for (uint32 index = 0; index < frames_in_flight; ++index)
+    {
+        gpu::destroy_gpu_heap(staging[index]);
+        gpu::destroy_command_pool(pools[index]);
+    }
     gpu::destroy_timeline_semaphore(timeline);
     gpu::destroy_device(device);
     SDL_DestroyWindow(window);
