@@ -21,7 +21,7 @@ In each frame:
 1. Call `ImGui_ImplNoGraphicsAPI_NewFrame`, the `NewFrame` of your platform backend, and `ImGui::NewFrame`.
 2. Build the UI and call `ImGui::Render`.
 3. Outside a render pass, call `ImGui_ImplNoGraphicsAPI_UpdateTextures` with `ImGui::GetDrawData()`.
-   It records the creation, the upload and the destruction of textures. Vulkan does not allow copies in a render pass.
+   It creates and destroys textures at once, and records their initialization and uploads. Vulkan does not allow copies in a render pass.
 4. In a render pass on a color target of `InitInfo::colorFormat`, call `ImGui_ImplNoGraphicsAPI_RenderDrawData` with the same draw data.
    It records one `draw_indexed` for each `ImDrawCmd`.
 5. Submit the command buffer.
@@ -54,13 +54,15 @@ An allocation that does not fit is a programmer error, and the backend asserts.
 
 `ImTextureID` is the slot of the texture in the texture descriptor heap of the backend.
 Slot 0 stays empty, because `ImTextureID_Invalid` is 0. The heap has `InitInfo::maxTextures + 1` slots.
-`maxTextures` counts the font atlas and the user textures. The default is 64.
+`maxTextures` counts the font atlas and the user textures, plus one more atlas. The default is 64.
+When ImGui grows the atlas, the old atlas keeps its slot for `framesInFlight` frames while the new atlas takes a second slot.
 The backend creates each texture as `rgba8_unorm`, and expands an `ImTextureFormat_Alpha8` texture to white with that alpha.
 To show your own image, put its pixels in an `ImTextureData` and register it with `ImGui::RegisterUserTexture`.
 The backend has no call that adds a `gpu::Texture` that you create.
 
-Each draw gets a 32-byte root, [`ImGuiNgaRoot`](../utility/src/imgui_impl_nographicsapi_shared.h): a GPU pointer to the vertices,
-the texture slot, the sRGB flag, and the scale and translation of the display.
+The draws read a 32-byte root, [`ImGuiNgaRoot`](../utility/src/imgui_impl_nographicsapi_shared.h).
+It holds a GPU pointer to the vertices, the texture slot, the sRGB flag, and the scale and translation of the display.
+A new root starts when the texture or the vertex pointer changes, so a frame uses at most one root for each `ImDrawCmd`.
 The vertex shader reads the vertices through the pointer, with no vertex input state.
 The pointer includes `ImDrawCmd::VtxOffset`, because `SV_VertexID` excludes the base vertex of `draw_indexed`.
 
@@ -85,7 +87,7 @@ because the backend samples textures as `rgba8_unorm`.
 ## Shader
 
 The shader is [`imgui_impl_nographicsapi.slang`](../utility/src/imgui_impl_nographicsapi.slang).
-Its SPIR-V is embedded in `utility/src/imgui_impl_nographicsapi_spirv.h`, so a build needs no shader tools.
+`utility/src/imgui_impl_nographicsapi_spirv.h` embeds its SPIR-V, so a build needs no shader tools.
 After you change the shader, run [`tools/write_imgui_spirv.py`](../tools/write_imgui_spirv.py) to write the header again.
 It uses `slangc` and `spirv-val` from `PATH`, or the paths of `--slangc` and `--spirv-val`.
 The test `test_imgui_spirv_embedded` runs the script with `--check`. The test fails when the header differs from a fresh compile.

@@ -12,7 +12,7 @@ struct ImGui_ImplNoGraphicsAPI_InitInfo
 {
     gpu::Device* device = nullptr;
     gpu::Format colorFormat = gpu::Format::undefined; // The target format. An _srgb format linearizes the vertex colors.
-    uint32 maxTextures = 64; // The font atlas and the user textures.
+    uint32 maxTextures = 64; // The font atlas, the user textures, and one more atlas while ImGui grows the atlas.
     uint32 framesInFlight = 2;
 };
 
