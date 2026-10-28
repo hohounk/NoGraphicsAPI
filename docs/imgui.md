@@ -17,7 +17,7 @@ Do not define `IMGUI_USE_BGRA_PACKED_COLOR`. The shader reads `ImDrawVert::col` 
 
 Call `ImGui_ImplNoGraphicsAPI_Init` once, before the first frame. You must set `InitInfo::device` and `InitInfo::colorFormat`.
 `maxTextures` and `framesInFlight` must not be zero. Init asserts each of these conditions.
-`ImGui_ImplNoGraphicsAPI_Init` creates the PSO for `InitInfo::colorFormat`, the descriptor heaps and the sampler.
+`ImGui_ImplNoGraphicsAPI_Init` creates the PSO for `InitInfo::colorFormat`, the descriptor heaps and two samplers, linear and nearest.
 In each frame:
 
 1. Call `ImGui_ImplNoGraphicsAPI_NewFrame`, the `NewFrame` of your platform backend, and `ImGui::NewFrame`.
@@ -28,7 +28,7 @@ In each frame:
    It records one `draw_indexed` for each `ImDrawCmd`.
 5. Submit the command buffer.
 
-At shutdown, call `wait_idle`, then `ImGui_ImplNoGraphicsAPI_Shutdown`. Shutdown destroys every texture that ImGui still holds.
+At shutdown, call `wait_idle`, then `ImGui_ImplNoGraphicsAPI_Shutdown`. Shutdown destroys every texture that ImGui still holds, and no texture of `AddTexture`.
 
 ## Frames in flight
 
@@ -45,9 +45,11 @@ Do not reset or reuse that memory until the GPU completes the frame.
 
 | Call | Bytes |
 | --- | --- |
-| `UpdateTextures` | `width * height * 4` for each new texture, and `w * h * 4` for each rect of a texture update |
-| `RenderDrawData` | `TotalVtxCount * 20` of vertices, `TotalIdxCount * sizeof(ImDrawIdx)` of indices, and 32 for each root |
+| `UpdateTextures` | `width * height * 4` for each new texture, and the bytes of each texture update |
+| `RenderDrawData` | `TotalVtxCount * 20` of vertices, `TotalIdxCount * sizeof(ImDrawIdx)` of indices, and 40 for each root |
 
+A texture update costs `UpdateRect.w * UpdateRect.h * 4` when the sum of the areas of its rects is at least half the area of `UpdateRect`,
+and `w * h * 4` for each rect otherwise.
 Each allocation rounds up to 16 bytes. The largest single need is a new font atlas.
 When ImGui grows the atlas, it asks for a new texture of the larger size.
 An allocation that does not fit is a programmer error, and the backend asserts.
@@ -56,16 +58,22 @@ An allocation that does not fit is a programmer error, and the backend asserts.
 
 `ImTextureID` is the slot of the texture in the texture descriptor heap of the backend.
 Slot 0 stays empty, because `ImTextureID_Invalid` is 0. The heap has `InitInfo::maxTextures + 1` slots.
-`maxTextures` counts the font atlas and the user textures, plus one more atlas. The default is 64.
+`maxTextures` counts the font atlas, the user textures and the added GPU textures, plus one more atlas. The default is 64.
 When ImGui grows the atlas, the old atlas keeps its slot for `framesInFlight` frames while the new atlas takes a second slot.
 More live textures than `maxTextures` is a programmer error, and the backend asserts.
 The backend creates each texture as `rgba8_unorm`, and expands an `ImTextureFormat_Alpha8` texture to white with that alpha.
 To show your own image, put its pixels in an `ImTextureData` and register it with `ImGui::RegisterUserTexture`.
-The backend has no call that adds a `gpu::Texture` that you create.
 
-The draws read a 32-byte root, [`ImGuiNgaRoot`](../utility/src/imgui_impl_nographicsapi_shared.h).
-It holds a GPU pointer to the vertices, the texture slot, the sRGB flag, and the scale and translation of the display.
-A new root starts when the texture or the vertex pointer changes, so a frame uses at most one root for each `ImDrawCmd`.
+To show a `gpu::Texture` that you create, for example a render target, call `ImGui_ImplNoGraphicsAPI_AddTexture`.
+It writes a sampled descriptor of the texture into a free slot and returns that slot. Draw it with `ImGui::Image(ImTextureRef(id), size)`.
+You keep the ownership. Create the texture with `TextureUsage::sampled`, in a color format that samples as float: not `_uint`, depth or stencil.
+Make it readable by the fragment stage before `RenderDrawData`.
+Call `ImGui_ImplNoGraphicsAPI_RemoveTexture` after no frame in flight uses the id, then destroy the texture.
+Shutdown frees the slots of added textures and destroys none of them.
+
+The draws read a 40-byte root, [`ImGuiNgaRoot`](../utility/src/imgui_impl_nographicsapi_shared.h).
+It holds a GPU pointer to the vertices, the texture slot, the sRGB flag, the sampler, and the scale and translation of the display.
+A new root starts when the texture, the vertex pointer or the sampler changes, so a frame uses at most one root for each `ImDrawCmd`.
 The vertex shader reads the vertices through the pointer, with no vertex input state.
 The pointer includes `ImDrawCmd::VtxOffset`, because `SV_VertexID` excludes the base vertex of `draw_indexed`.
 
@@ -77,15 +85,20 @@ Bind your own PSO, heaps, viewport and scissor again before you record more draw
 A user callback of `ImDrawList::AddCallback` runs during the call. If the callback changes the state,
 add `ImGui::GetPlatformIO().DrawCallback_ResetRenderState` after it. This callback binds the state of the backend again.
 
+The draws sample with a linear sampler. Add `DrawCallback_SetSamplerNearest` of the platform IO to a draw list to sample the draws
+after it with nearest filtering, for example for pixel art, and `DrawCallback_SetSamplerLinear` to go back.
+`DrawCallback_ResetRenderState` and the start of each `RenderDrawData` select linear again. All samplers clamp to the edge.
+
 ## sRGB targets
 
-ImGui colors are sRGB values. With a `colorFormat` of `r8_srgb`, `rg8_srgb`, `rgba8_srgb` or `bgra8_srgb`,
+ImGui colors are sRGB values. With an `_srgb` `colorFormat`, for which `get_texture_format_info(format).srgb` is true,
 the vertex shader converts the vertex colors to linear.
 The target converts them back when it writes, so the pixels have the ImGui color values.
-Only these four formats get the conversion. Other formats, float formats such as `rgba16_float` included, get the sRGB values unchanged.
+Other formats, float formats such as `rgba16_float` included, get the sRGB values unchanged.
 On a linear target, for example an `rgba16_float` swapchain in the extended sRGB linear color space, the colors thus show lighter than in ImGui.
-The conversion applies to vertex colors only. On an `_srgb` target, an `ImGui::Image` shows lighter than its texel bytes,
-because the backend samples textures as `rgba8_unorm`.
+The conversion applies to vertex colors only. On an `_srgb` target, an `ImGui::Image` of an ImGui texture shows lighter than its texel bytes,
+because the backend samples those textures as `rgba8_unorm`. A texture of `AddTexture` samples in its own format:
+an `_srgb` texture on an `_srgb` target shows its texel bytes, and on a linear target it shows darker.
 
 ## Shader
 
@@ -93,5 +106,9 @@ The shader is [`imgui_impl_nographicsapi.slang`](../utility/src/imgui_impl_nogra
 `utility/src/imgui_impl_nographicsapi_spirv.h` embeds its SPIR-V, so a build needs no shader tools.
 After you change the shader, run [`tools/write_imgui_spirv.py`](../tools/write_imgui_spirv.py) to write the header again.
 It uses `slangc` and `spirv-val` from `PATH`, or the paths of `--slangc` and `--spirv-val`.
+It takes the flags from [`examples/NoGraphicsAPI_slang_flags.txt`](../examples/NoGraphicsAPI_slang_flags.txt),
+the same file that `NoGraphicsAPI_compile_slang` reads, so the backend shader and the example shaders compile with the same flags.
 The test `test_imgui_spirv_embedded` runs the script with `--check`. The test fails when the header differs from a fresh compile.
 It skips when `slangc` is not the version that the header records.
+The test `test_imgui_spirv_check` needs no compiler. It replaces `slangc` and `spirv-val` with a fake and checks the `--check` results,
+the SPIR-V magic check and the flags of each command.

@@ -2,10 +2,14 @@
 """Compile the ImGui backend shader and write its embedded SPIR-V header.
 
 Without --check, the script writes utility/src/imgui_impl_nographicsapi_spirv.h.
+The flags come from examples/NoGraphicsAPI_slang_flags.txt, which CMake also reads.
 With --check, it compares that header with a fresh compile. It exits 1 on a
 difference and 77 when slangc is not the version that the header records.
 """
+from __future__ import annotations
+
 import argparse
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -14,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "utility" / "src" / "imgui_impl_nographicsapi.slang"
 HEADER = ROOT / "utility" / "src" / "imgui_impl_nographicsapi_spirv.h"
+FLAGS = ROOT / "examples" / "NoGraphicsAPI_slang_flags.txt"
 STAGES = (
     ("vertexMain", "vertex", "imgui_vertex_spirv"),
     ("fragmentMain", "fragment", "imgui_fragment_spirv"),
@@ -21,20 +26,27 @@ STAGES = (
 VERSION_PREFIX = "// slangc "
 
 
+def read_flags(path: Path) -> dict[str, list[str]]:
+    flags = {}
+    # shlex splits as separate_arguments(UNIX_COMMAND) of NoGraphicsAPI_slang.cmake does.
+    for line in path.read_text().splitlines():
+        words = shlex.split(line, comments=True)
+        if words:
+            flags[words[0]] = words[1:]
+    return flags
+
+
 def slangc_version(slangc: str) -> str:
     result = subprocess.run([slangc, "-version"], capture_output=True, text=True, check=True)
     return (result.stdout + result.stderr).strip()
 
 
-def compile_stage(slangc: str, spirv_val: str, entry: str, stage: str, output: Path) -> list[int]:
+def compile_stage(slangc: str, spirv_val: str, flags: dict[str, list[str]], entry: str, stage: str, output: Path) -> list[int]:
     subprocess.run(
-        [slangc, str(SOURCE), "-target", "spirv", "-profile", "spirv_1_5", "-emit-spirv-directly",
-         "-fvk-use-entrypoint-name", "-entry", entry, "-stage", stage,
-         "-fvk-use-c-layout", "-matrix-layout-row-major",
-         "-I", str(SOURCE.parent), "-I", str(ROOT / "include"), "-I", str(ROOT / "utility" / "include"),
-         "-capability", "spvDescriptorHeapEXT", "-o", str(output)],
+        [slangc, str(SOURCE), *flags["spirv"], "-entry", entry, "-stage", stage, *flags["common"],
+         "-I", str(SOURCE.parent), "-I", str(ROOT / "include"), "-I", str(ROOT / "utility" / "include"), "-o", str(output)],
         check=True)
-    subprocess.run([spirv_val, "--target-env", "vulkan1.4", "--scalar-block-layout", str(output)], check=True)
+    subprocess.run([spirv_val, *flags["spirv-val"], str(output)], check=True)
     data = output.read_bytes()
     if len(data) % 4 or data[:4] != b"\x03\x02\x23\x07":
         raise SystemExit(f"{output}: not a little-endian SPIR-V module")
@@ -59,12 +71,12 @@ def render(version: str, arrays: list[tuple[str, list[int]]]) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slangc", default="slangc")
     parser.add_argument("--spirv-val", default="spirv-val")
     parser.add_argument("--check", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     version = slangc_version(args.slangc)
     if args.check:
@@ -73,8 +85,9 @@ def main() -> int:
         if recorded != version:
             print(f"skip: the header records slangc {recorded}, this host has {version}")
             return 77
+    flags = read_flags(FLAGS)
     with tempfile.TemporaryDirectory() as scratch:
-        arrays = [(name, compile_stage(args.slangc, args.spirv_val, entry, stage, Path(scratch) / f"{stage}.spv"))
+        arrays = [(name, compile_stage(args.slangc, args.spirv_val, flags, entry, stage, Path(scratch) / f"{stage}.spv"))
                   for entry, stage, name in STAGES]
     text = render(version, arrays)
     if args.check:

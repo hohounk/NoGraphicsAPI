@@ -1,0 +1,5 @@
+# Slang flags of NoGraphicsAPI_compile_slang (NoGraphicsAPI_slang.cmake) and tools/write_imgui_spirv.py.
+# One list per line: its name, then its flags, separated by spaces.
+common -fvk-use-c-layout -matrix-layout-row-major
+spirv -target spirv -profile spirv_1_5 -emit-spirv-directly -fvk-use-entrypoint-name -capability spvDescriptorHeapEXT
+spirv-val --target-env vulkan1.4 --scalar-block-layout
