@@ -781,8 +781,9 @@ bool resize(gpu::Device* device, TestWindow& window, gpu::uint32x2 extent) noexc
 }
 
 // A present fence stays pending until swapchain recreation polls it or wait_idle waits for it.
-int lose_present_fence(gpu::Device* device, gpu::CommandPool* pool, TestWindow& window) noexcept
+int lose_present_fence(const char* name, gpu::Device* device, gpu::CommandPool* pool, TestWindow& window) noexcept
 {
+    printf("Losing the device on the %s surface.\n", name);
     gpu::set_error_callback(receive_device_lost);
     arm_lost(lost_operation, "vkGetFenceStatus");
     if (!strcmp(lost_operation, "vkGetFenceStatus"))
@@ -844,7 +845,7 @@ bool present_frames(const char* name, const char* const* extensions, VkSurfaceKH
             gpu::submit(device, {.commands = {&commands, 1}, .completion = {.semaphore = timeline, .value = frame}});
         gpu::wait_timeline({.semaphore = timeline, .value = frame});
         // A device-lost run ends on its first presenting surface, as receive_device_lost ends a passing run.
-        if (lost_operation && acquired.render_view) _Exit(lose_present_fence(device, pool, window));
+        if (lost_operation && acquired.render_view) _Exit(lose_present_fence(name, device, pool, window));
     }
     const gpu::uint32x2 extent = gpu::get_drawable_extent(device);
     check(extent.x == window.extent.x && extent.y == window.extent.y, "get_drawable_extent returns the window extent");
@@ -859,17 +860,19 @@ bool present_frames(const char* name, const char* const* extensions, VkSurfaceKH
     return true;
 }
 
-// Every surface that a GPU presents to runs. Headless and Wayland surfaces have no fixed extent, and an X11 window has one.
-int present_case() noexcept
+// Every surface that a GPU presents to runs, or only the surface named by only. Headless and Wayland surfaces have no fixed extent,
+// and an X11 window has one.
+int present_case(const char* only) noexcept
 {
     gpu::set_error_callback(receive_error);
     const gpu::uint32x2 initial_extent{.x = 64, .y = 48};
     TestWindow window{.extent = initial_extent};
     bool presented = false;
-    if (instance_extension_available(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME))
+    if ((!only || !strcmp(only, "headless")) && instance_extension_available(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME))
         presented = present_frames("headless", headless_extensions, create_headless_surface, window, false);
 #if defined(NOGRAPHICSAPI_TEST_WAYLAND)
-    window.display = instance_extension_available(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME) ? wl_display_connect(nullptr) : nullptr;
+    window.display = (!only || !strcmp(only, "Wayland")) && instance_extension_available(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME)
+        ? wl_display_connect(nullptr) : nullptr;
     if (window.display)
     {
         wl_registry* registry = wl_display_get_registry(window.display);
@@ -888,7 +891,8 @@ int present_case() noexcept
     }
 #endif
 #if defined(NOGRAPHICSAPI_TEST_XCB)
-    window.connection = instance_extension_available(VK_KHR_XCB_SURFACE_EXTENSION_NAME) ? xcb_connect(nullptr, nullptr) : nullptr;
+    window.connection = (!only || !strcmp(only, "X11")) && instance_extension_available(VK_KHR_XCB_SURFACE_EXTENSION_NAME)
+        ? xcb_connect(nullptr, nullptr) : nullptr;
     if (window.connection && !xcb_connection_has_error(window.connection))
     {
         window.extent = initial_extent;
@@ -985,10 +989,10 @@ bool lost_without_stop(const char* operation, const char* site) noexcept
     return true;
 }
 
-int device_lost_case(const char* operation) noexcept
+int device_lost_case(const char* operation, const char* surface) noexcept
 {
     lost_operation = operation;
-    if (!strcmp(operation, "vkWaitForFences") || !strcmp(operation, "vkGetFenceStatus")) return present_case();
+    if (!strcmp(operation, "vkWaitForFences") || !strcmp(operation, "vkGetFenceStatus")) return present_case(surface);
     const gpu::DeviceInit init = gpu::create_device({.timestamp_query_count = 8});
     if (init.error == gpu::Error::unsupported)
     {
@@ -1046,14 +1050,14 @@ DWORD WINAPI callback_thread(void*) noexcept
 
 int main(int argc, char** argv)
 {
-    if (argc == 2 && !strcmp(argv[1], "--present")) return present_case();
+    if (argc == 2 && !strcmp(argv[1], "--present")) return present_case(nullptr);
     if (argc == 2 && !strcmp(argv[1], "--present-ext-swapchain-maintenance1"))
     {
         hide_khr_swapchain_maintenance1 = true;
-        return present_case();
+        return present_case(nullptr);
     }
     if (argc == 2 && !strcmp(argv[1], "--validation-forwarding")) return validation_forwarding_case();
-    if (argc == 3 && !strcmp(argv[1], "--device-lost")) return device_lost_case(argv[2]);
+    if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--device-lost")) return device_lost_case(argv[2], argc == 4 ? argv[3] : nullptr);
     gpu::set_error_callback(receive_error);
     arm("vkCreateInstance", VK_ERROR_OUT_OF_HOST_MEMORY);
     gpu::DeviceInit init = gpu::create_device();

@@ -395,11 +395,18 @@ if(NOT APPLE)
         NOGRAPHICSAPI_FAILURE_FRAGMENT="${continuation_fragment_spv}")
     add_test(NAME test_startup_failures COMMAND test_startup_failures)
     set_tests_properties(test_startup_failures PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
-    # The present fence operations use the present case's surface and skip with it.
-    foreach(operation vkQueueSubmit2 vkWaitSemaphores vkGetQueryPoolResults vkDeviceWaitIdle vkWaitForFences vkGetFenceStatus)
+    foreach(operation vkQueueSubmit2 vkWaitSemaphores vkGetQueryPoolResults vkDeviceWaitIdle)
         add_test(NAME test_startup_failures_device_lost_${operation} COMMAND test_startup_failures --device-lost ${operation})
         set_tests_properties(test_startup_failures_device_lost_${operation} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
             FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
+    endforeach()
+    # The present fence operations run once on each surface of the present case and skip where that surface does not present.
+    foreach(operation vkWaitForFences vkGetFenceStatus)
+        foreach(surface headless Wayland X11)
+            add_test(NAME test_startup_failures_device_lost_${operation}_${surface} COMMAND test_startup_failures --device-lost ${operation} ${surface})
+            set_tests_properties(test_startup_failures_device_lost_${operation}_${surface} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+                FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
+        endforeach()
     endforeach()
     if(NOT WIN32)
         # The present case runs on every surface that a GPU presents to: a headless surface, a Wayland surface without a role
