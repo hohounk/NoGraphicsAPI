@@ -22,5 +22,6 @@ IMGUI_IMPL_API bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_I
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_Shutdown();
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_NewFrame();
 // Record outside a render pass, before RenderDrawData. Creates, updates and destroys the textures of data->Textures.
-// The staging bytes come from bump: a new texture costs width * height * 4 bytes.
+// The staging bytes come from bump: a new texture costs width * height * 4 bytes, and each rect of a texture update costs
+// w * h * 4 bytes. Each of these allocations rounds up to 16 bytes.
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump);

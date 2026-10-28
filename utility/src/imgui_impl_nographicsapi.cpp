@@ -161,6 +161,7 @@ void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandB
     assert(data && draw_data && commands && "call ImGui_ImplNoGraphicsAPI_Init first");
     if (!draw_data->Textures) return;
     bool copied = false;
+    bool updated = false;
     for (ImTextureData* texture : *draw_data->Textures)
     {
         if (texture->Status == ImTextureStatus_WantCreate)
@@ -186,6 +187,10 @@ void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandB
         }
         else if (texture->Status == ImTextureStatus_WantUpdates)
         {
+            // Earlier frames in flight may still sample the texture, and two update rects may overlap.
+            if (!updated) gpu::barrier(commands, gpu::Stage::fragment | gpu::Stage::transfer, gpu::Access::shader_read | gpu::Access::transfer_write,
+                                       gpu::Stage::transfer, gpu::Access::transfer_write);
+            updated = true;
             gpu::Texture* destination = data->slots[uint32(texture->TexID)].texture;
             for (const ImTextureRect& rect : texture->Updates) upload_rect(commands, bump, destination, texture, rect);
             texture->SetStatus(ImTextureStatus_OK);
