@@ -174,6 +174,16 @@ bool has_name(Span<const VkExtensionProperties> values, const char* name)
     return false;
 }
 
+bool has_name(Span<const char* const> values, const char* name)
+{
+    for (size_t index = 0; index < values.size; ++index)
+    {
+        if (strcmp(values.data[index], name) == 0)
+            return true;
+    }
+    return false;
+}
+
 #if !defined(NDEBUG)
 bool has_name(Span<const VkLayerProperties> values, const char* name)
 {
@@ -1374,6 +1384,7 @@ struct Swapchain
     CommandBuffer* transition_commands = nullptr;
     bool acquired = false;
     bool recreate_required = false;
+    bool variable_extent = false; // The surface reports no fixed extent, so acquire asks drawable_extent.
 
     Swapchain() = default;
     Swapchain(const Swapchain&) = delete;
@@ -1814,7 +1825,7 @@ DeviceInit create_device(const DeviceDesc& desc) noexcept
             enabled_instance_extensions[enabled_instance_extension_count++] = VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
         assert(desc.instance_extension_count <= 8 && "at most eight WSI instance extensions");
         for (uint32 index = 0; index < desc.instance_extension_count; ++index)
-            if (strcmp(desc.instance_extensions[index], VK_KHR_SURFACE_EXTENSION_NAME) != 0)
+            if (!has_name({enabled_instance_extensions, enabled_instance_extension_count}, desc.instance_extensions[index]))
                 enabled_instance_extensions[enabled_instance_extension_count++] = desc.instance_extensions[index];
     }
 
@@ -2354,6 +2365,7 @@ Error recreate_swapchain(Swapchain& swapchain) noexcept
     const VkExtent2D extent = surface_extent(device, capabilities);
     if (extent.width == UINT_MAX)
         return Error::unsupported;
+    swapchain.variable_extent = capabilities.currentExtent.width == UINT_MAX;
     if ((capabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0)
     {
         return Error::unsupported;
@@ -2573,6 +2585,12 @@ SwapchainFrame acquire(CommandBuffer* commands) noexcept
 
     Swapchain* swapchain = device->swapchain;
     detail::PresentContext* present_context = nullptr;
+    // A surface without a fixed extent reports no resize through acquire or present.
+    if (swapchain->variable_extent)
+    {
+        const uint32x2 extent = device->drawable_extent(device->wsi_user);
+        if (extent.x != swapchain->width || extent.y != swapchain->height) swapchain->recreate_required = true;
+    }
 
     for (;;)
     {

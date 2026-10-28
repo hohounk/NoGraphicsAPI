@@ -373,7 +373,15 @@ if(NOT APPLE)
             FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
     endforeach()
     if(NOT WIN32)
-        # The present case falls back from a headless surface to an unmapped X11 window when libxcb is found.
+        # The present case runs on every surface that a GPU presents to: a headless surface, a Wayland surface without a role
+        # when libwayland-client is found, and an unmapped X11 window when libxcb is found.
+        find_path(NOGRAPHICSAPI_WAYLAND_INCLUDE_DIR wayland-client.h)
+        find_library(NOGRAPHICSAPI_WAYLAND_LIBRARY wayland-client)
+        if(NOGRAPHICSAPI_WAYLAND_INCLUDE_DIR AND NOGRAPHICSAPI_WAYLAND_LIBRARY)
+            target_include_directories(test_startup_failures PRIVATE ${NOGRAPHICSAPI_WAYLAND_INCLUDE_DIR})
+            target_link_libraries(test_startup_failures PRIVATE ${NOGRAPHICSAPI_WAYLAND_LIBRARY})
+            target_compile_definitions(test_startup_failures PRIVATE NOGRAPHICSAPI_TEST_WAYLAND VK_USE_PLATFORM_WAYLAND_KHR)
+        endif()
         find_path(NOGRAPHICSAPI_XCB_INCLUDE_DIR xcb/xcb.h)
         find_library(NOGRAPHICSAPI_XCB_LIBRARY xcb)
         if(NOGRAPHICSAPI_XCB_INCLUDE_DIR AND NOGRAPHICSAPI_XCB_LIBRARY)
