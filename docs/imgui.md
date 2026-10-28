@@ -15,6 +15,8 @@ Do not define `IMGUI_USE_BGRA_PACKED_COLOR`. The shader reads `ImDrawVert::col` 
 
 ## Frame
 
+Call `ImGui_ImplNoGraphicsAPI_Init` once, before the first frame. You must set `InitInfo::device` and `InitInfo::colorFormat`.
+`maxTextures` and `framesInFlight` must not be zero. Init asserts each of these conditions.
 `ImGui_ImplNoGraphicsAPI_Init` creates the PSO for `InitInfo::colorFormat`, the descriptor heaps and the sampler.
 In each frame:
 
@@ -56,6 +58,7 @@ An allocation that does not fit is a programmer error, and the backend asserts.
 Slot 0 stays empty, because `ImTextureID_Invalid` is 0. The heap has `InitInfo::maxTextures + 1` slots.
 `maxTextures` counts the font atlas and the user textures, plus one more atlas. The default is 64.
 When ImGui grows the atlas, the old atlas keeps its slot for `framesInFlight` frames while the new atlas takes a second slot.
+More live textures than `maxTextures` is a programmer error, and the backend asserts.
 The backend creates each texture as `rgba8_unorm`, and expands an `ImTextureFormat_Alpha8` texture to white with that alpha.
 To show your own image, put its pixels in an `ImTextureData` and register it with `ImGui::RegisterUserTexture`.
 The backend has no call that adds a `gpu::Texture` that you create.

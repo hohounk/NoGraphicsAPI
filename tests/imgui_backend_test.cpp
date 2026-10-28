@@ -87,11 +87,12 @@ void request_update(ImTextureData* texture, ImTextureRect rect) noexcept
     texture->SetStatus(ImTextureStatus_WantUpdates);
 }
 
-// Starts one ImGui frame on a 256x160 display.
-void new_frame() noexcept
+// Starts one ImGui frame on a 256x160 framebuffer. The display is that size divided by framebuffer_scale.
+void new_frame(float framebuffer_scale = 1.0f) noexcept
 {
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(float(target_width), float(target_height));
+    io.DisplaySize = ImVec2(float(target_width) / framebuffer_scale, float(target_height) / framebuffer_scale);
+    io.DisplayFramebufferScale = ImVec2(framebuffer_scale, framebuffer_scale);
     io.DeltaTime = 1.0f / 60.0f;
     ImGui_ImplNoGraphicsAPI_NewFrame();
     ImGui::NewFrame();
@@ -109,20 +110,19 @@ void run_frame(Fixture& fixture) noexcept
     submit_and_wait(fixture, commands);
 }
 
+// Creates the fixture and initializes the backend with frames_in_flight. On a failure it destroys the fixture and returns false.
+bool begin_texture_case(gpu::Device* device, Fixture& fixture, uint32 frames_in_flight) noexcept
+{
+    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = gpu::Format::rgba8_unorm, .framesInFlight = frames_in_flight};
+    if (create_fixture(fixture, device) && ImGui_ImplNoGraphicsAPI_Init(&info)) return true;
+    destroy_fixture(fixture);
+    return false;
+}
+
 int test_lifecycle(gpu::Device* device, const char*) noexcept
 {
     Fixture fixture{};
-    if (!create_fixture(fixture, device))
-    {
-        destroy_fixture(fixture);
-        return check(false, "the fixture is created");
-    }
-    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = gpu::Format::rgba8_unorm, .framesInFlight = 2};
-    if (!ImGui_ImplNoGraphicsAPI_Init(&info))
-    {
-        destroy_fixture(fixture);
-        return check(false, "Init returns true");
-    }
+    if (!begin_texture_case(device, fixture, 2)) return check(false, "the fixture and the backend are created");
     int failures = 0;
 
     run_frame(fixture);
@@ -162,6 +162,51 @@ int test_lifecycle(gpu::Device* device, const char*) noexcept
                       "Shutdown destroys every live texture");
     ImGui::UnregisterUserTexture(&alpha);
     ImGui::UnregisterUserTexture(&second);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
+// Shutdown destroys a texture that waits for its frames in flight to end.
+int test_shutdown_pending(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    if (!begin_texture_case(device, fixture, 2)) return check(false, "the fixture and the backend are created");
+    int failures = 0;
+
+    ImTextureData user;
+    user.Create(ImTextureFormat_RGBA32, 4, 4);
+    ImGui::RegisterUserTexture(&user);
+    run_frame(fixture);
+    user.WantDestroyNextFrame = true;
+    run_frame(fixture);
+    failures += check(user.Status == ImTextureStatus_WantDestroy && user.TexID == 2, "a texture unused for one frame waits with framesInFlight 2");
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    failures += check(user.TexID == ImTextureID_Invalid, "Shutdown destroys a texture that waits for destruction");
+    ImGui::UnregisterUserTexture(&user);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
+// With framesInFlight 1, a texture is destroyed after one frame that does not use it.
+int test_one_frame(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    if (!begin_texture_case(device, fixture, 1)) return check(false, "the fixture and the backend are created");
+    int failures = 0;
+
+    ImTextureData user;
+    user.Create(ImTextureFormat_RGBA32, 4, 4);
+    ImGui::RegisterUserTexture(&user);
+    run_frame(fixture);
+    failures += check(user.Status == ImTextureStatus_OK && user.TexID == 2, "a user texture is created in slot 2");
+    user.WantDestroyNextFrame = true;
+    run_frame(fixture);
+    failures += check(user.Status == ImTextureStatus_Destroyed && user.TexID == ImTextureID_Invalid,
+                      "a texture unused for one frame is destroyed with framesInFlight 1");
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    ImGui::UnregisterUserTexture(&user);
     destroy_fixture(fixture);
     return failures ? 1 : 0;
 }
@@ -437,6 +482,37 @@ int test_srgb(gpu::Device* device, const char*) noexcept
     return failures;
 }
 
+// A 128x80 display with a framebuffer scale of 2 fills the 256x160 target. A rect at (40, 20)-(60, 40) gets the clip rect
+// (45, 25)-(55, 35), so the target shows it at (90, 50)-(110, 70). The clip rect cuts the rect on every side.
+int test_scale(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
+
+    for (uint32 frame = 0; frame < 2; ++frame)
+    {
+        new_frame(2.0f);
+        ImDrawList* list = ImGui::GetForegroundDrawList();
+        list->PushClipRect(ImVec2(45.0f, 25.0f), ImVec2(55.0f, 35.0f));
+        list->AddRectFilled(ImVec2(40.0f, 20.0f), ImVec2(60.0f, 40.0f), IM_COL32(255, 0, 255, 255));
+        list->PopClipRect();
+        render_frame(fixture, target, frame == 1);
+    }
+    // (200, 140) is covered by nothing, so it holds the clear color.
+    int failures = 0;
+    failures += check(pixel_differs(target, 100, 60, 200, 140), "the clipped rect is drawn at twice its display position");
+    failures += check(!pixel_differs(target, 85, 60, 200, 140), "the clip rect cuts the rect on the left at twice its display position");
+    failures += check(!pixel_differs(target, 115, 60, 200, 140), "the clip rect cuts the rect on the right at twice its display position");
+    failures += check(!pixel_differs(target, 100, 45, 200, 140), "the clip rect cuts the rect at the top at twice its display position");
+    failures += check(!pixel_differs(target, 100, 75, 200, 140), "the clip rect cuts the rect at the bottom at twice its display position");
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
 struct TestCase
 {
     const char* name;
@@ -446,9 +522,12 @@ struct TestCase
 const TestCase test_cases[] = {
     {.name = "init", .run = test_init},
     {.name = "lifecycle", .run = test_lifecycle},
+    {.name = "shutdown_pending", .run = test_shutdown_pending},
+    {.name = "one_frame", .run = test_one_frame},
     {.name = "golden", .run = test_golden},
     {.name = "scissor", .run = test_scissor},
     {.name = "srgb", .run = test_srgb},
+    {.name = "scale", .run = test_scale},
 };
 
 } // namespace
