@@ -12,6 +12,8 @@
 #endif
 static_assert(sizeof(ImDrawVert) == sizeof(ImGuiNgaVertex) && offsetof(ImDrawVert, pos) == offsetof(ImGuiNgaVertex, position) &&
               offsetof(ImDrawVert, uv) == offsetof(ImGuiNgaVertex, uv) && offsetof(ImDrawVert, col) == offsetof(ImGuiNgaVertex, color));
+static_assert(sizeof(ImGuiNgaVertex) == 20);
+static_assert(sizeof(ImGuiNgaRoot) == 32);
 
 namespace
 {
@@ -28,9 +30,8 @@ struct BackendData
     gpu::PSO* pso = nullptr;
     gpu::TextureDescriptorHeap* textures = nullptr;
     gpu::SamplerDescriptorHeap* samplers = nullptr;
-    TextureSlot* slots = nullptr; // maxTextures + 1 entries. Slot 0 stays empty.
-    uint32* free_slots = nullptr; // A stack of free slots; the lowest slot is on top.
-    uint32 free_count = 0;
+    TextureSlot* slots = nullptr; // maxTextures + 1 entries. Slot 0 stays empty; a slot without a texture is free.
+    uint32 max_textures = 0;
     uint32 frames_in_flight = 0;
     uint32 srgb = 0;
 };
@@ -41,7 +42,6 @@ void release_texture(BackendData& data, ImTextureData* texture) noexcept
     gpu::destroy_texture(data.slots[slot].texture);
     gpu::destroy_texture_heap(data.slots[slot].heap);
     data.slots[slot] = {};
-    data.free_slots[data.free_count++] = slot;
     texture->SetTexID(ImTextureID_Invalid);
     texture->SetStatus(ImTextureStatus_Destroyed);
 }
@@ -52,23 +52,21 @@ void upload_rect(gpu::CommandBuffer* commands, gpu::BumpAllocator& bump, gpu::Te
     const uint64 row_bytes = uint64(rect.w) * 4;
     const gpu::GpuCpuRange<byte> staging = bump.allocate(row_bytes * rect.h);
     assert(staging.size && "the bump allocator has no room for the texture bytes");
-    for (uint32 y = 0; y < rect.h; ++y)
+    if (texture->Format == ImTextureFormat_RGBA32 && rect.w == texture->Width)
     {
-        const byte* source = static_cast<const byte*>(texture->GetPixelsAt(rect.x, rect.y + int(y)));
-        byte* row = staging.cpu + y * row_bytes;
-        if (texture->Format == ImTextureFormat_RGBA32)
+        memcpy(staging.cpu, texture->GetPixelsAt(rect.x, rect.y), size_t(row_bytes * rect.h));
+    }
+    else if (texture->Format == ImTextureFormat_RGBA32)
+    {
+        for (uint32 y = 0; y < rect.h; ++y) memcpy(staging.cpu + y * row_bytes, texture->GetPixelsAt(rect.x, rect.y + int(y)), size_t(row_bytes));
+    }
+    else
+    {
+        for (uint32 y = 0; y < rect.h; ++y)
         {
-            memcpy(row, source, size_t(row_bytes));
-        }
-        else
-        {
-            for (uint32 x = 0; x < rect.w; ++x)
-            {
-                row[x * 4 + 0] = 255;
-                row[x * 4 + 1] = 255;
-                row[x * 4 + 2] = 255;
-                row[x * 4 + 3] = source[x];
-            }
+            const byte* source = static_cast<const byte*>(texture->GetPixelsAt(rect.x, rect.y + int(y)));
+            uint32* row = reinterpret_cast<uint32*>(staging.cpu + y * row_bytes);
+            for (uint32 x = 0; x < rect.w; ++x) row[x] = (uint32(source[x]) << 24) | 0x00ffffffu;
         }
     }
     gpu::copy_memory_to_texture(commands, gpu::gpu_range(staging), destination, {
@@ -117,7 +115,7 @@ bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_InitInfo* info)
     {
         gpu::destroy_sampler_descriptor_heap(samplers);
         gpu::destroy_texture_descriptor_heap(textures);
-        if (pso) gpu::destroy_pso(pso);
+        gpu::destroy_pso(pso);
         return false;
     }
     gpu::write_sampler_descriptor(samplers, 0, {
@@ -126,19 +124,17 @@ bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_InitInfo* info)
         .address_w = gpu::AddressMode::clamp_to_edge,
     });
 
-    const gpu::Format format = info->colorFormat;
     BackendData* data = new BackendData{
         .device = info->device,
         .pso = pso,
         .textures = textures,
         .samplers = samplers,
         .slots = new TextureSlot[info->maxTextures + 1]{},
-        .free_slots = new uint32[info->maxTextures],
-        .free_count = info->maxTextures,
+        .max_textures = info->maxTextures,
         .frames_in_flight = info->framesInFlight,
-        .srgb = format == gpu::Format::r8_srgb || format == gpu::Format::rg8_srgb || format == gpu::Format::rgba8_srgb || format == gpu::Format::bgra8_srgb,
+        .srgb = info->colorFormat == gpu::Format::r8_srgb || info->colorFormat == gpu::Format::rg8_srgb || info->colorFormat == gpu::Format::rgba8_srgb ||
+                info->colorFormat == gpu::Format::bgra8_srgb,
     };
-    for (uint32 index = 0; index < info->maxTextures; ++index) data->free_slots[index] = info->maxTextures - index;
 
     io.BackendRendererUserData = data;
     io.BackendRendererName = "imgui_impl_nographicsapi";
@@ -157,7 +153,6 @@ void ImGui_ImplNoGraphicsAPI_Shutdown()
     gpu::destroy_sampler_descriptor_heap(data->samplers);
     gpu::destroy_texture_descriptor_heap(data->textures);
     gpu::destroy_pso(data->pso);
-    delete[] data->free_slots;
     delete[] data->slots;
     delete data;
     ImGui::GetPlatformIO().DrawCallback_ResetRenderState = nullptr;
@@ -182,8 +177,10 @@ void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandB
     {
         if (texture->Status == ImTextureStatus_WantCreate)
         {
-            assert(texture->Width > 0 && texture->Height > 0 && data->free_count && "maxTextures is exhausted");
-            const uint32 slot = data->free_slots[--data->free_count];
+            assert(texture->Width > 0 && texture->Height > 0);
+            uint32 slot = 1;
+            while (slot <= data->max_textures && data->slots[slot].texture) ++slot;
+            assert(slot <= data->max_textures && "maxTextures is exhausted");
             const gpu::TextureDesc desc{
                 .extent = {.x = uint32(texture->Width), .y = uint32(texture->Height), .z = 1},
                 .format = gpu::Format::rgba8_unorm,
@@ -249,16 +246,15 @@ void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandB
     constexpr gpu::IndexType index_type = sizeof(ImDrawIdx) == 2 ? gpu::IndexType::uint16 : gpu::IndexType::uint32;
     const float2 scale{.x = 2.0f / draw_data->DisplaySize.x, .y = 2.0f / draw_data->DisplaySize.y};
     const float2 translate{.x = -1.0f - draw_data->DisplayPos.x * scale.x, .y = -1.0f - draw_data->DisplayPos.y * scale.y};
-    const ImVec2 clip_offset = draw_data->DisplayPos;
-    const ImVec2 clip_scale = draw_data->FramebufferScale;
     bind_render_state(*data, commands, framebuffer_width, framebuffer_height);
 
     // The vertex pointer carries the vertex offset, because SV_VertexID excludes the base vertex of draw_indexed.
     const ImGuiNgaRoot* root = nullptr;
-    uint32 root_texture = 0;
+    uint32 root_texture = 0; // ImTextureID_Invalid, which no draw uses.
     const ImGuiNgaVertex* root_vertices = nullptr;
     uint32 vertex_base = 0;
     uint32 index_base = 0;
+    gpu::Scissor scissor{.x = -1}; // No clip rect maps to x = -1, so the first draw, and the first after a user callback, sets its scissor.
     for (const ImDrawList* list : draw_data->CmdLists)
     {
         for (const ImDrawCmd& command : list->CmdBuffer)
@@ -266,19 +262,28 @@ void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandB
             if (command.UserCallback)
             {
                 if (command.UserCallback == reset_render_state) bind_render_state(*data, commands, framebuffer_width, framebuffer_height);
-                else command.UserCallback(list, &command);
+                else
+                {
+                    command.UserCallback(list, &command);
+                    scissor = {.x = -1};
+                }
                 continue;
             }
-            const float min_x = fmaxf((command.ClipRect.x - clip_offset.x) * clip_scale.x, 0.0f);
-            const float min_y = fmaxf((command.ClipRect.y - clip_offset.y) * clip_scale.y, 0.0f);
-            const float max_x = fminf((command.ClipRect.z - clip_offset.x) * clip_scale.x, framebuffer_width);
-            const float max_y = fminf((command.ClipRect.w - clip_offset.y) * clip_scale.y, framebuffer_height);
+            const float min_x = fmaxf((command.ClipRect.x - draw_data->DisplayPos.x) * draw_data->FramebufferScale.x, 0.0f);
+            const float min_y = fmaxf((command.ClipRect.y - draw_data->DisplayPos.y) * draw_data->FramebufferScale.y, 0.0f);
+            const float max_x = fminf((command.ClipRect.z - draw_data->DisplayPos.x) * draw_data->FramebufferScale.x, framebuffer_width);
+            const float max_y = fminf((command.ClipRect.w - draw_data->DisplayPos.y) * draw_data->FramebufferScale.y, framebuffer_height);
             if (max_x <= min_x || max_y <= min_y) continue;
-            gpu::set_scissor(commands, {.x = int32(min_x), .y = int32(min_y), .width = uint32(max_x - min_x), .height = uint32(max_y - min_y)});
+            const gpu::Scissor scissor_rect{.x = int32(min_x), .y = int32(min_y), .width = uint32(max_x - min_x), .height = uint32(max_y - min_y)};
+            if (scissor_rect.x != scissor.x || scissor_rect.y != scissor.y || scissor_rect.width != scissor.width || scissor_rect.height != scissor.height)
+            {
+                gpu::set_scissor(commands, scissor_rect);
+                scissor = scissor_rect;
+            }
 
             const uint32 texture = uint32(command.GetTexID());
             ImGuiNgaVertex* command_vertices = vertices.gpu + vertex_base + command.VtxOffset;
-            if (!root || texture != root_texture || command_vertices != root_vertices)
+            if (texture != root_texture || command_vertices != root_vertices)
             {
                 const gpu::GpuCpuRange<ImGuiNgaRoot> allocation = bump.allocate<ImGuiNgaRoot>();
                 assert(allocation.size && "the bump allocator has no room for a root");

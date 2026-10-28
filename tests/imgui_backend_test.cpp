@@ -70,7 +70,21 @@ void destroy_fixture(Fixture& fixture) noexcept
     gpu::destroy_timeline_semaphore(fixture.completion.semaphore);
     gpu::destroy_gpu_heap(fixture.staging);
     gpu::destroy_command_pool(fixture.pool);
-    fixture = {};
+}
+
+void submit_and_wait(Fixture& fixture, gpu::CommandBuffer* commands) noexcept
+{
+    gpu::end_commands(commands);
+    ++fixture.completion.value;
+    gpu::submit(fixture.device, {.commands = {commands}, .completion = fixture.completion});
+    gpu::wait_timeline(fixture.completion);
+}
+
+void request_update(ImTextureData* texture, ImTextureRect rect) noexcept
+{
+    texture->Updates.push_back(rect);
+    texture->UpdateRect = rect;
+    texture->SetStatus(ImTextureStatus_WantUpdates);
 }
 
 // Starts one ImGui frame on a 256x160 display.
@@ -92,10 +106,7 @@ void run_frame(Fixture& fixture) noexcept
     gpu::reset_command_pool(fixture.pool);
     gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
     ImGui_ImplNoGraphicsAPI_UpdateTextures(ImGui::GetDrawData(), commands, bump);
-    gpu::end_commands(commands);
-    ++fixture.completion.value;
-    gpu::submit(fixture.device, {.commands = {commands}, .completion = fixture.completion});
-    gpu::wait_timeline(fixture.completion);
+    submit_and_wait(fixture, commands);
 }
 
 int test_lifecycle(gpu::Device* device, const char*) noexcept
@@ -124,10 +135,7 @@ int test_lifecycle(gpu::Device* device, const char*) noexcept
     run_frame(fixture);
     failures += check(user.Status == ImTextureStatus_OK && user.TexID == 2, "a user texture is created in slot 2");
 
-    const ImTextureRect rect{.x = 1, .y = 1, .w = 2, .h = 2};
-    user.Updates.push_back(rect);
-    user.UpdateRect = rect;
-    user.SetStatus(ImTextureStatus_WantUpdates);
+    request_update(&user, {.x = 1, .y = 1, .w = 2, .h = 2});
     run_frame(fixture);
     failures += check(user.Status == ImTextureStatus_OK, "an update returns the texture to OK");
 
@@ -184,10 +192,7 @@ bool create_render_target(Fixture& fixture, RenderTarget& target, gpu::Format fo
     gpu::reset_command_pool(fixture.pool);
     gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
     gpu::initialize_texture(commands, target.texture);
-    gpu::end_commands(commands);
-    ++fixture.completion.value;
-    gpu::submit(fixture.device, {.commands = {commands}, .completion = fixture.completion});
-    gpu::wait_timeline(fixture.completion);
+    submit_and_wait(fixture, commands);
     return true;
 }
 
@@ -197,7 +202,16 @@ void destroy_render_target(RenderTarget& target) noexcept
     gpu::destroy_texture(target.texture);
     gpu::destroy_texture_heap(target.heap);
     gpu::destroy_gpu_heap(target.readback);
-    target = {};
+}
+
+// Creates the fixture and the target and initializes the backend for format. On a failure it destroys what it created and returns false.
+bool begin_case(gpu::Device* device, Fixture& fixture, RenderTarget& target, gpu::Format format) noexcept
+{
+    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = format};
+    if (create_fixture(fixture, device) && create_render_target(fixture, target, format) && ImGui_ImplNoGraphicsAPI_Init(&info)) return true;
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return false;
 }
 
 // The command buffer that render_frame records, for user callbacks.
@@ -224,17 +238,19 @@ void render_frame(Fixture& fixture, RenderTarget& target, bool read_back) noexce
         gpu::copy_texture_to_memory(commands, target.texture, gpu::gpu_range(target.readback));
         gpu::barrier(commands, gpu::Stage::transfer, gpu::Access::transfer_write, gpu::Stage::host, gpu::Access::host_read);
     }
-    gpu::end_commands(commands);
-    ++fixture.completion.value;
-    gpu::submit(fixture.device, {.commands = {commands}, .completion = fixture.completion});
-    gpu::wait_timeline(fixture.completion);
+    submit_and_wait(fixture, commands);
+}
+
+const uint8* pixel_at(const RenderTarget& target, uint32 x, uint32 y) noexcept
+{
+    return target.readback.range.cpu + (uint64(y) * target_width + x) * 4;
 }
 
 // True when a channel of the pixel (x, y) of the read-back target differs by more than 8 from the pixel (reference_x, reference_y).
 bool pixel_differs(const RenderTarget& target, uint32 x, uint32 y, uint32 reference_x, uint32 reference_y) noexcept
 {
-    const uint8* pixel = target.readback.range.cpu + (uint64(y) * target_width + x) * 4;
-    const uint8* reference = target.readback.range.cpu + (uint64(reference_y) * target_width + reference_x) * 4;
+    const uint8* pixel = pixel_at(target, x, y);
+    const uint8* reference = pixel_at(target, reference_x, reference_y);
     for (uint32 channel = 0; channel < 4; ++channel)
         if (abs(int(pixel[channel]) - int(reference[channel])) > 8) return true;
     return false;
@@ -244,23 +260,11 @@ bool pixel_differs(const RenderTarget& target, uint32 x, uint32 y, uint32 refere
 // With golden_output, the third frame is written to that path instead.
 int test_golden(gpu::Device* device, const char* golden_output) noexcept
 {
-    Fixture fixture{};
-    RenderTarget target{};
-    if (!create_fixture(fixture, device) || !create_render_target(fixture, target, gpu::Format::rgba8_unorm))
-    {
-        destroy_render_target(target);
-        destroy_fixture(fixture);
-        return check(false, "the fixture and the render target are created");
-    }
     // An Alpha8 atlas draws the same pixels as the default RGBA32 one, and takes the Alpha8 path of the texture upload.
     ImGui::GetIO().Fonts->TexDesiredFormat = ImTextureFormat_Alpha8;
-    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = gpu::Format::rgba8_unorm};
-    if (!ImGui_ImplNoGraphicsAPI_Init(&info))
-    {
-        destroy_render_target(target);
-        destroy_fixture(fixture);
-        return check(false, "Init returns true");
-    }
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
     int failures = 0;
 
     // Four columns: red, green, blue and white. After the first frame, an update paints the center 2x2 texels yellow.
@@ -294,7 +298,6 @@ int test_golden(gpu::Device* device, const char* golden_output) noexcept
         render_frame(fixture, target, frame == 2);
         if (frame == 0)
         {
-            const ImTextureRect rect{.x = 1, .y = 1, .w = 2, .h = 2};
             for (int y = 1; y < 3; ++y)
                 for (int x = 1; x < 3; ++x)
                 {
@@ -303,9 +306,7 @@ int test_golden(gpu::Device* device, const char* golden_output) noexcept
                     pixel[1] = 255;
                     pixel[2] = 0;
                 }
-            user.Updates.push_back(rect);
-            user.UpdateRect = rect;
-            user.SetStatus(ImTextureStatus_WantUpdates);
+            request_update(&user, {.x = 1, .y = 1, .w = 2, .h = 2});
         }
     }
     failures += check(ImGui::GetIO().Fonts->TexData->Format == ImTextureFormat_Alpha8, "the font atlas of the golden is Alpha8");
@@ -330,7 +331,7 @@ int test_golden(gpu::Device* device, const char* golden_output) noexcept
         if (file) fclose(file);
         if (differing) fprintf(stderr, "%u channels differ from the golden by more than 8\n", differing);
         failures += check(rows == target_height, "golden/imgui_backend.rgba holds 256x160 RGBA8 pixels");
-        failures += check(rows == target_height && differing == 0, "the third frame matches the golden within 8");
+        failures += check(differing == 0, "the third frame matches the golden within 8");
     }
 
     ImGui_ImplNoGraphicsAPI_Shutdown();
@@ -351,19 +352,7 @@ int test_scissor(gpu::Device* device, const char*) noexcept
 {
     Fixture fixture{};
     RenderTarget target{};
-    if (!create_fixture(fixture, device) || !create_render_target(fixture, target, gpu::Format::rgba8_unorm))
-    {
-        destroy_render_target(target);
-        destroy_fixture(fixture);
-        return check(false, "the fixture and the render target are created");
-    }
-    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = gpu::Format::rgba8_unorm};
-    if (!ImGui_ImplNoGraphicsAPI_Init(&info))
-    {
-        destroy_render_target(target);
-        destroy_fixture(fixture);
-        return check(false, "Init returns true");
-    }
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
     int failures = 0;
     failures += check(ImGui::GetPlatformIO().DrawCallback_ResetRenderState != nullptr, "Init sets DrawCallback_ResetRenderState");
 
@@ -423,19 +412,7 @@ int test_srgb(gpu::Device* device, const char*) noexcept
 {
     Fixture fixture{};
     RenderTarget target{};
-    if (!create_fixture(fixture, device) || !create_render_target(fixture, target, gpu::Format::rgba8_srgb))
-    {
-        destroy_render_target(target);
-        destroy_fixture(fixture);
-        return check(false, "the fixture and the render target are created");
-    }
-    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = gpu::Format::rgba8_srgb};
-    if (!ImGui_ImplNoGraphicsAPI_Init(&info))
-    {
-        destroy_render_target(target);
-        destroy_fixture(fixture);
-        return check(false, "Init returns true");
-    }
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_srgb)) return check(false, "the fixture, the render target and the backend are created");
 
     // Mid values, because 0 and 255 read back the same with and without the conversion.
     const uint8 color[4] = {64, 128, 192, 255};
@@ -446,7 +423,7 @@ int test_srgb(gpu::Device* device, const char*) noexcept
         render_frame(fixture, target, frame == 1);
     }
     // (128, 80) is the center of the quad.
-    const uint8* pixel = target.readback.range.cpu + (uint64(80) * target_width + 128) * 4;
+    const uint8* pixel = pixel_at(target, 128, 80);
     bool matches = true;
     for (uint32 channel = 0; channel < 4; ++channel) matches = matches && abs(int(pixel[channel]) - int(color[channel])) <= 1;
     if (!matches)

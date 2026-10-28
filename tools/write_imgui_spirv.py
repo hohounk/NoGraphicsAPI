@@ -68,7 +68,8 @@ def main() -> int:
 
     version = slangc_version(args.slangc)
     if args.check:
-        recorded = next((line[len(VERSION_PREFIX):] for line in HEADER.read_text().splitlines() if line.startswith(VERSION_PREFIX)), None)
+        current = HEADER.read_text()
+        recorded = next((line[len(VERSION_PREFIX):] for line in current.splitlines() if line.startswith(VERSION_PREFIX)), None)
         if recorded != version:
             print(f"skip: the header records slangc {recorded}, this host has {version}")
             return 77
@@ -77,7 +78,7 @@ def main() -> int:
                   for entry, stage, name in STAGES]
     text = render(version, arrays)
     if args.check:
-        if HEADER.read_text() != text:
+        if current != text:
             print(f"FAIL: {HEADER.relative_to(ROOT)} differs from a fresh compile; run tools/write_imgui_spirv.py")
             return 1
         print("embedded SPIR-V matches the shader source")
