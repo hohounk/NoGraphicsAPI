@@ -97,6 +97,12 @@ class CheckTest(unittest.TestCase):
             self.check(FakeTools(header_version(), modules))
         self.assertIn("not a little-endian SPIR-V module", str(raised.exception.code))
 
+    def test_a_module_whose_length_is_not_whole_words_is_rejected(self):
+        modules = dict(self.matching, vertex=to_bytes([MAGIC, 0x00010500, 0, 1, 0]) + b"\x00")
+        with self.assertRaises(SystemExit) as raised:
+            self.check(FakeTools(header_version(), modules))
+        self.assertIn("not a little-endian SPIR-V module", str(raised.exception.code))
+
     def test_another_slangc_version_skips(self):
         result, output = self.check(FakeTools(header_version() + ".1", self.matching))
         self.assertEqual(result, 77)

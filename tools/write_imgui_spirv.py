@@ -6,7 +6,10 @@ The flags come from examples/NoGraphicsAPI_slang_flags.txt, which CMake also rea
 With --check, it compares that header with a fresh compile. It exits 1 on a
 difference and 77 when slangc is not the version that the header records.
 """
+from __future__ import annotations
+
 import argparse
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -25,10 +28,11 @@ VERSION_PREFIX = "// slangc "
 
 def read_flags(path: Path) -> dict[str, list[str]]:
     flags = {}
+    # shlex splits as separate_arguments(UNIX_COMMAND) of NoGraphicsAPI_slang.cmake does.
     for line in path.read_text().splitlines():
-        if line and not line.startswith("#"):
-            name, *values = line.split()
-            flags[name] = values
+        words = shlex.split(line, comments=True)
+        if words:
+            flags[words[0]] = words[1:]
     return flags
 
 
