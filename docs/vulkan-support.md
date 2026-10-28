@@ -37,13 +37,20 @@ conventional feature checked by device creation.
 | 64-bit timestamps (optional) | Supported queues capture GPU markers; `read_timestamps(pool)` retrieves them into CPU memory after submission completion. |
 | Shader and layout features | Scalar layout, float16, 16-bit push/storage access, draw parameters, independent blending, and formatless storage-image access. |
 | Texture features | At least BC or ASTC LDR compression; exact format and usage support remains queryable. |
-| Win32 WSI | `VK_KHR_surface`, `VK_KHR_win32_surface`, `VK_KHR_swapchain`, and the maintenance extensions listed below. |
+| WSI | `VK_KHR_surface`, `VK_KHR_swapchain`, and the maintenance extensions listed below. Win32 adds `VK_KHR_win32_surface`; Linux adds the app's `instance_extensions`. |
 
 Windowed devices also require `VK_KHR_get_surface_capabilities2`,
 `VK_KHR_surface_maintenance1`, and [`VK_KHR_swapchain_maintenance1`][swapchain-maintenance]. The
 original EXT variants are accepted as a paired fallback. Swapchain maintenance supplies a completion
 fence for each presentation.
 Debug builds enable `VK_EXT_debug_utils` and the Khronos validation layer when available.
+
+### Linux presentation
+
+The app owns the window and supplies three `DeviceDesc` WSI fields. `instance_extensions` names the surface extensions,
+such as `VK_KHR_wayland_surface` or `VK_KHR_xcb_surface`. `create_surface` returns the surface, and the device owns
+and destroys it. `drawable_extent` returns the window extent. On a surface without a fixed extent, such as Wayland,
+each acquire asks it. Both callbacks get `wsi_user`. Null callbacks keep the Win32 path.
 
 ## GPU heaps and application-side allocation
 
