@@ -111,4 +111,4 @@ the same file that `NoGraphicsAPI_compile_slang` reads, so the backend shader an
 The test `test_imgui_spirv_embedded` runs the script with `--check`. The test fails when the header differs from a fresh compile.
 It skips when `slangc` is not the version that the header records.
 The test `test_imgui_spirv_check` needs no compiler. It replaces `slangc` and `spirv-val` with a fake and checks the `--check` results,
-the SPIR-V magic check and the flags of each command.
+the SPIR-V magic check and the flags of each command. It also fails when a script in `tools/` holds a copy of a flag of the flags file.

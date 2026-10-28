@@ -7,6 +7,11 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
+
+# No __pycache__ in the source tree.
+sys.dont_write_bytecode = True
+from write_imgui_spirv import FLAGS, read_flags  # noqa: E402
 
 
 def run(command):
@@ -74,6 +79,7 @@ def main():
                 yield from visit(typename, member + ("[0]." if array else "."))
 
     layouts = {root: {} for root in roots}
+    flags = read_flags(FLAGS)
 
     def check(root):
         source = ["#include <stdio.h>", "#include <stddef.h>", f'#include "{declarations[root][0]}"', "int main() {"]
@@ -94,11 +100,9 @@ def main():
                          f'[[vk::binding(0)]] ConstantBuffer<{root}> root : register(b0);\n'
                          f'[[vk::binding(3)]] RWStructuredBuffer<{root}> result : register(u3);\n'
                          '[numthreads(1, 1, 1)] void computeMain() { result[0] = root; }\n')
-        common = [args.slang.resolve(), probe, *includes, "-entry", "computeMain", "-stage", "compute",
-                  "-fvk-use-c-layout", "-matrix-layout-row-major"]
+        common = [args.slang.resolve(), probe, *includes, "-entry", "computeMain", "-stage", "compute", *flags["common"]]
         reflection = probe.with_suffix(".json")
-        run(common + ["-target", "spirv", "-profile", "spirv_1_5", "-reflection-json", reflection,
-                      "-o", probe.with_suffix(".spv")])
+        run(common + [*flags["spirv"], "-reflection-json", reflection, "-o", probe.with_suffix(".spv")])
         parameters = json.loads(reflection.read_text())["parameters"]
         reflected = next(parameter for parameter in parameters if parameter["name"] == "root")["type"]["elementType"]
 

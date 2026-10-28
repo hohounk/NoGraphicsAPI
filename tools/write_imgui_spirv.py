@@ -2,7 +2,7 @@
 """Compile the ImGui backend shader and write its embedded SPIR-V header.
 
 Without --check, the script writes utility/src/imgui_impl_nographicsapi_spirv.h.
-The flags come from examples/NoGraphicsAPI_slang_flags.txt, which CMake also reads.
+The flags come from examples/NoGraphicsAPI_slang_flags.txt, which CMake and check_root_layouts.py also read.
 With --check, it compares that header with a fresh compile. It exits 1 on a
 difference and 77 when slangc is not the version that the header records.
 """
