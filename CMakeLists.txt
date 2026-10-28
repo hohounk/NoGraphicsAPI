@@ -91,6 +91,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(NoGraphicsAPI PRIVATE -Wno-missing-field-initializers)
 endif()
 
+if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND AND APPLE)
+    message(FATAL_ERROR "NOGRAPHICSAPI_BUILD_IMGUI_BACKEND supports Vulkan only: the backend embeds SPIR-V")
+endif()
+
 if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND AND (NOGRAPHICSAPI_BUILD_TESTS OR NOGRAPHICSAPI_BUILD_EXAMPLES) AND NOT TARGET ${NOGRAPHICSAPI_IMGUI_TARGET})
     include(cmake/NoGraphicsAPI_imgui.cmake)
 endif()

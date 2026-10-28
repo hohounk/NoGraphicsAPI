@@ -92,9 +92,6 @@ target_link_libraries(NoGraphicsAPIUtility_utility INTERFACE
     NoGraphicsAPIUtility::math NoGraphicsAPIUtility::allocators NoGraphicsAPIUtility::textures NoGraphicsAPIUtility::uploads)
 
 if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND)
-    if(APPLE)
-        message(FATAL_ERROR "NOGRAPHICSAPI_BUILD_IMGUI_BACKEND supports Vulkan only: the backend embeds SPIR-V")
-    endif()
     if(NOT TARGET ${NOGRAPHICSAPI_IMGUI_TARGET})
         message(FATAL_ERROR "NOGRAPHICSAPI_BUILD_IMGUI_BACKEND links the imgui target '${NOGRAPHICSAPI_IMGUI_TARGET}', which does not exist. "
             "Define it before adding NoGraphicsAPI, or set NOGRAPHICSAPI_IMGUI_TARGET.")

@@ -3,6 +3,13 @@
 #include "imgui_impl_nographicsapi_spirv.h"
 
 #include <assert.h>
+#include <stddef.h>
+
+#if defined(IMGUI_USE_BGRA_PACKED_COLOR)
+#error "The shader reads ImDrawVert::col as RGBA8: IMGUI_USE_BGRA_PACKED_COLOR is not supported"
+#endif
+static_assert(sizeof(ImDrawVert) == sizeof(ImGuiNgaVertex) && offsetof(ImDrawVert, pos) == offsetof(ImGuiNgaVertex, position) &&
+              offsetof(ImDrawVert, uv) == offsetof(ImGuiNgaVertex, uv) && offsetof(ImDrawVert, col) == offsetof(ImGuiNgaVertex, color));
 
 namespace
 {
