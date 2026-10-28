@@ -610,6 +610,79 @@ int test_sampler(gpu::Device* device, const char*) noexcept
     return failures ? 1 : 0;
 }
 
+// A 16x16 texture that the GPU clears to (0.25, 0.75, 0.5, 1), drawn through ImGui_ImplNoGraphicsAPI_AddTexture. After RemoveTexture,
+// a texture of ImGui takes the freed slot. A second AddTexture stays registered through Shutdown, and the case destroys the texture after
+// Shutdown, so a Shutdown that destroyed it would destroy it twice.
+int test_user_texture(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
+    int failures = 0;
+
+    const gpu::TextureDesc desc{
+        .extent = {.x = 16, .y = 16, .z = 1},
+        .format = gpu::Format::rgba8_unorm,
+        .usage = gpu::TextureUsage::sampled | gpu::TextureUsage::color_attachment,
+    };
+    const gpu::TextureHeap heap = gpu::create_texture_heap(device, gpu::get_texture_size_align(device, desc).size);
+    gpu::Texture* texture = heap.owner ? gpu::create_texture(device, desc, heap, 0) : nullptr;
+    gpu::RenderView* view = texture ? gpu::create_render_view(texture) : nullptr;
+    failures += check(view != nullptr, "the user texture is created");
+    if (view)
+    {
+        gpu::reset_command_pool(fixture.pool);
+        gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
+        gpu::initialize_texture(commands, texture);
+        const gpu::ColorAttachment color{.render_view = view, .load = gpu::LoadOp::clear, .clear = {.x = 0.25f, .y = 0.75f, .z = 0.5f, .w = 1.0f}};
+        gpu::begin_render_pass(commands, {.colors = {&color, 1}});
+        gpu::end_render_pass(commands);
+        gpu::barrier(commands, gpu::Stage::color_output, gpu::Access::color_write, gpu::Stage::fragment, gpu::Access::shader_read);
+        submit_and_wait(fixture, commands);
+
+        const ImTextureID id = ImGui_ImplNoGraphicsAPI_AddTexture(texture);
+        failures += check(id != ImTextureID_Invalid, "AddTexture returns a valid ImTextureID");
+        for (uint32 frame = 0; frame < 2; ++frame)
+        {
+            new_frame();
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::Begin("User texture", nullptr, fixed_window_flags | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground);
+            ImGui::Image(ImTextureRef(id), ImVec2(64.0f, 64.0f));
+            ImGui::End();
+            render_frame(fixture, target, frame == 1);
+        }
+        // The window padding puts the image at (8, 8)-(72, 72).
+        const uint8* pixel = pixel_at(target, 40, 40);
+        const int expected[4] = {64, 191, 128, 255};
+        bool matches = true;
+        for (uint32 channel = 0; channel < 4; ++channel) matches = matches && abs(int(pixel[channel]) - expected[channel]) <= 1;
+        if (!matches) fprintf(stderr, "the image reads %d %d %d %d\n", pixel[0], pixel[1], pixel[2], pixel[3]);
+        failures += check(matches, "ImGui::Image of an added texture shows its GPU-rendered color");
+
+        ImGui_ImplNoGraphicsAPI_RemoveTexture(id);
+        ImTextureData reused;
+        reused.Create(ImTextureFormat_RGBA32, 4, 4);
+        ImGui::RegisterUserTexture(&reused);
+        run_frame(fixture);
+        failures += check(reused.Status == ImTextureStatus_OK && reused.TexID == id, "a texture of ImGui reuses the slot that RemoveTexture freed");
+
+        const ImTextureID kept = ImGui_ImplNoGraphicsAPI_AddTexture(texture);
+        failures += check(kept != ImTextureID_Invalid && kept != id, "a second AddTexture takes a free slot");
+        ImGui_ImplNoGraphicsAPI_Shutdown();
+        ImGui::UnregisterUserTexture(&reused);
+    }
+    else
+    {
+        ImGui_ImplNoGraphicsAPI_Shutdown();
+    }
+    gpu::destroy_render_view(view);
+    gpu::destroy_texture(texture);
+    gpu::destroy_texture_heap(heap);
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
 struct TestCase
 {
     const char* name;
@@ -626,6 +699,7 @@ const TestCase test_cases[] = {
     {.name = "srgb", .run = test_srgb},
     {.name = "scale", .run = test_scale},
     {.name = "sampler", .run = test_sampler},
+    {.name = "user_texture", .run = test_user_texture},
 };
 
 } // namespace

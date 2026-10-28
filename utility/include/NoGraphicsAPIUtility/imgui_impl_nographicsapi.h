@@ -22,6 +22,13 @@ IMGUI_IMPL_API bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_I
 // Call after wait_idle. Destroys every texture of ImGui::GetPlatformIO().Textures.
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_Shutdown();
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_NewFrame();
+
+// Registers a texture that you create and own, for ImGui::Image(ImTextureRef(id), ...), and returns its slot. Create it with
+// TextureUsage::sampled, and make it readable by the fragment stage before RenderDrawData. Its slot counts toward maxTextures.
+IMGUI_IMPL_API ImTextureID ImGui_ImplNoGraphicsAPI_AddTexture(gpu::Texture* texture);
+// Frees the slot of an AddTexture id. Call it only after no frame in flight uses the id. Shutdown frees every such slot and
+// destroys none of the textures: destroy each texture after RemoveTexture or Shutdown.
+IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_RemoveTexture(ImTextureID id);
 // Record outside a render pass, before RenderDrawData. Creates, updates and destroys the textures of data->Textures.
 // The staging bytes come from bump: a new texture costs width * height * 4 bytes, and each rect of a texture update costs
 // w * h * 4 bytes. Each of these allocations rounds up to 16 bytes.

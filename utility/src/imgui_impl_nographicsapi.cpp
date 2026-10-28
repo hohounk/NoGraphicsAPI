@@ -22,6 +22,7 @@ struct TextureSlot
 {
     gpu::Texture* texture = nullptr;
     gpu::TextureHeap heap{};
+    bool external = false; // A texture of ImGui_ImplNoGraphicsAPI_AddTexture, which the caller owns.
 };
 
 struct BackendData
@@ -37,9 +38,18 @@ struct BackendData
     uint32 sampler = 0; // The sampler descriptor of the draws that follow: 0 linear, 1 nearest.
 };
 
+uint32 allocate_slot(const BackendData& data) noexcept
+{
+    uint32 slot = 1;
+    while (slot <= data.max_textures && data.slots[slot].texture) ++slot;
+    assert(slot <= data.max_textures && "maxTextures is exhausted");
+    return slot;
+}
+
 void release_texture(BackendData& data, ImTextureData* texture) noexcept
 {
     const uint32 slot = uint32(texture->TexID);
+    assert(!data.slots[slot].external);
     gpu::destroy_texture(data.slots[slot].texture);
     gpu::destroy_texture_heap(data.slots[slot].heap);
     data.slots[slot] = {};
@@ -192,6 +202,25 @@ void ImGui_ImplNoGraphicsAPI_NewFrame()
     assert(ImGui::GetIO().BackendRendererUserData && "call ImGui_ImplNoGraphicsAPI_Init first");
 }
 
+ImTextureID ImGui_ImplNoGraphicsAPI_AddTexture(gpu::Texture* texture)
+{
+    BackendData* data = static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData);
+    assert(data && texture && "call ImGui_ImplNoGraphicsAPI_Init first");
+    const uint32 slot = allocate_slot(*data);
+    data->slots[slot] = {.texture = texture, .external = true};
+    gpu::write_texture_descriptor(data->textures, slot, texture, gpu::TextureDescriptorType::sampled);
+    return ImTextureID(slot);
+}
+
+void ImGui_ImplNoGraphicsAPI_RemoveTexture(ImTextureID id)
+{
+    BackendData* data = static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData);
+    assert(data && "call ImGui_ImplNoGraphicsAPI_Init first");
+    const uint32 slot = uint32(id);
+    assert(slot >= 1 && slot <= data->max_textures && data->slots[slot].external && "the id is not a texture of AddTexture");
+    data->slots[slot] = {};
+}
+
 void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump)
 {
     BackendData* data = static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData);
@@ -204,9 +233,7 @@ void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandB
         if (texture->Status == ImTextureStatus_WantCreate)
         {
             assert(texture->Width > 0 && texture->Height > 0);
-            uint32 slot = 1;
-            while (slot <= data->max_textures && data->slots[slot].texture) ++slot;
-            assert(slot <= data->max_textures && "maxTextures is exhausted");
+            const uint32 slot = allocate_slot(*data);
             const gpu::TextureDesc desc{
                 .extent = {.x = uint32(texture->Width), .y = uint32(texture->Height), .z = 1},
                 .format = gpu::Format::rgba8_unorm,

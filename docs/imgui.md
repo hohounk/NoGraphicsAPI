@@ -28,7 +28,7 @@ In each frame:
    It records one `draw_indexed` for each `ImDrawCmd`.
 5. Submit the command buffer.
 
-At shutdown, call `wait_idle`, then `ImGui_ImplNoGraphicsAPI_Shutdown`. Shutdown destroys every texture that ImGui still holds.
+At shutdown, call `wait_idle`, then `ImGui_ImplNoGraphicsAPI_Shutdown`. Shutdown destroys every texture that ImGui still holds, and no texture of `AddTexture`.
 
 ## Frames in flight
 
@@ -56,12 +56,17 @@ An allocation that does not fit is a programmer error, and the backend asserts.
 
 `ImTextureID` is the slot of the texture in the texture descriptor heap of the backend.
 Slot 0 stays empty, because `ImTextureID_Invalid` is 0. The heap has `InitInfo::maxTextures + 1` slots.
-`maxTextures` counts the font atlas and the user textures, plus one more atlas. The default is 64.
+`maxTextures` counts the font atlas, the user textures and the added GPU textures, plus one more atlas. The default is 64.
 When ImGui grows the atlas, the old atlas keeps its slot for `framesInFlight` frames while the new atlas takes a second slot.
 More live textures than `maxTextures` is a programmer error, and the backend asserts.
 The backend creates each texture as `rgba8_unorm`, and expands an `ImTextureFormat_Alpha8` texture to white with that alpha.
 To show your own image, put its pixels in an `ImTextureData` and register it with `ImGui::RegisterUserTexture`.
-The backend has no call that adds a `gpu::Texture` that you create.
+
+To show a `gpu::Texture` that you create, for example a render target, call `ImGui_ImplNoGraphicsAPI_AddTexture`.
+It writes a sampled descriptor of the texture into a free slot and returns that slot. Draw it with `ImGui::Image(ImTextureRef(id), size)`.
+You keep the ownership. Create the texture with `TextureUsage::sampled`, and make it readable by the fragment stage before `RenderDrawData`.
+Call `ImGui_ImplNoGraphicsAPI_RemoveTexture` after no frame in flight uses the id, then destroy the texture.
+Shutdown frees the slots of added textures and destroys none of them.
 
 The draws read a 40-byte root, [`ImGuiNgaRoot`](../utility/src/imgui_impl_nographicsapi_shared.h).
 It holds a GPU pointer to the vertices, the texture slot, the sRGB flag, the sampler, and the scale and translation of the display.
