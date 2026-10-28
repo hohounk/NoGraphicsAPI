@@ -200,6 +200,9 @@ void destroy_render_target(RenderTarget& target) noexcept
     target = {};
 }
 
+// The command buffer that render_frame records, for user callbacks.
+gpu::CommandBuffer* frame_commands = nullptr;
+
 // Ends the ImGui frame that new_frame began and draws it into the target, cleared to clear_color. The work is finished before it
 // returns. With read_back, target.readback holds the bytes of the target afterwards.
 void render_frame(Fixture& fixture, RenderTarget& target, bool read_back) noexcept
@@ -209,6 +212,7 @@ void render_frame(Fixture& fixture, RenderTarget& target, bool read_back) noexce
     gpu::BumpAllocator bump(fixture.staging.range);
     gpu::reset_command_pool(fixture.pool);
     gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
+    frame_commands = commands;
     ImGui_ImplNoGraphicsAPI_UpdateTextures(draw_data, commands, bump);
     const gpu::ColorAttachment color{.render_view = target.view, .load = gpu::LoadOp::clear, .clear = clear_color};
     gpu::begin_render_pass(commands, {.colors = {&color, 1}});
@@ -336,9 +340,11 @@ int test_golden(gpu::Device* device, const char* golden_output) noexcept
     return failures ? 1 : 0;
 }
 
+// Counts its calls and leaves a 1x1 viewport, which the reset callback that follows it must replace.
 void count_callback(const ImDrawList*, const ImDrawCmd* command) noexcept
 {
     ++*static_cast<uint32*>(command->UserCallbackData);
+    gpu::set_viewport(frame_commands, {.width = 1.0f, .height = 1.0f});
 }
 
 int test_scissor(gpu::Device* device, const char*) noexcept
@@ -380,6 +386,11 @@ int test_scissor(gpu::Device* device, const char*) noexcept
         list->PushClipRect(ImVec2(300.0f, 200.0f), ImVec2(340.0f, 240.0f));
         list->AddCircleFilled(ImVec2(320.0f, 220.0f), 16.0f, IM_COL32(255, 0, 255, 255), 64);
         list->PopClipRect();
+        // Past 65536 vertices ImGui starts a command with a new VtxOffset, so the last rect draws only through that offset.
+        list->PushClipRect(ImVec2(0.0f, 0.0f), ImVec2(256.0f, 160.0f));
+        for (uint32 index = 0; index < 16400; ++index) list->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), IM_COL32(255, 0, 255, 255));
+        list->AddRectFilled(ImVec2(100.0f, 130.0f), ImVec2(120.0f, 150.0f), IM_COL32(255, 0, 255, 255));
+        list->PopClipRect();
         ImGui::End();
         ImGui::SetNextWindowPos(ImVec2(176.0f, 100.0f));
         ImGui::SetNextWindowSize(ImVec2(120.0f, 90.0f));
@@ -387,6 +398,7 @@ int test_scissor(gpu::Device* device, const char*) noexcept
         ImGui::GetWindowDrawList()->AddCallback(count_callback, &callback_count);
         ImGui::GetWindowDrawList()->AddCallback(ImGui::GetPlatformIO().DrawCallback_ResetRenderState, nullptr);
         ImGui::Text("Bottom right");
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(220.0f, 140.0f), ImVec2(250.0f, 158.0f), IM_COL32(255, 0, 255, 255));
         ImGui::End();
         render_frame(fixture, target, frame == 2);
     }
@@ -394,6 +406,8 @@ int test_scissor(gpu::Device* device, const char*) noexcept
     failures += check(pixel_differs(target, 20, 20, 30, 130), "the window off the top-left corner is drawn");
     failures += check(pixel_differs(target, 230, 140, 30, 130), "the window off the bottom-right corner is drawn");
     failures += check(pixel_differs(target, 125, 75, 30, 130), "a rect whose clip rect exceeds the target is drawn");
+    failures += check(pixel_differs(target, 240, 150, 185, 155), "the reset callback restores the viewport after a user callback");
+    failures += check(pixel_differs(target, 110, 140, 30, 130), "a rect past 65536 vertices of one draw list is drawn");
     failures += check(callback_count == 3, "RenderDrawData calls the user callback once in each frame");
 
     ImGui_ImplNoGraphicsAPI_Shutdown();

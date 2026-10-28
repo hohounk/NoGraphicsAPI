@@ -82,8 +82,9 @@ void reset_render_state(const ImDrawList*, const ImDrawCmd*) noexcept
 {
 }
 
-void bind_render_state(const BackendData& data, gpu::CommandBuffer* commands) noexcept
+void bind_render_state(const BackendData& data, gpu::CommandBuffer* commands, float width, float height) noexcept
 {
+    gpu::set_viewport(commands, {.width = width, .height = height});
     gpu::set_texture_descriptor_heap(commands, data.textures);
     gpu::set_sampler_descriptor_heap(commands, data.samplers);
     gpu::bind_pso(commands, data.pso);
@@ -250,7 +251,7 @@ void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandB
     const float2 translate{.x = -1.0f - draw_data->DisplayPos.x * scale.x, .y = -1.0f - draw_data->DisplayPos.y * scale.y};
     const ImVec2 clip_offset = draw_data->DisplayPos;
     const ImVec2 clip_scale = draw_data->FramebufferScale;
-    bind_render_state(*data, commands);
+    bind_render_state(*data, commands, framebuffer_width, framebuffer_height);
 
     // The vertex pointer carries the vertex offset, because SV_VertexID excludes the base vertex of draw_indexed.
     const ImGuiNgaRoot* root = nullptr;
@@ -264,7 +265,7 @@ void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandB
         {
             if (command.UserCallback)
             {
-                if (command.UserCallback == reset_render_state) bind_render_state(*data, commands);
+                if (command.UserCallback == reset_render_state) bind_render_state(*data, commands, framebuffer_width, framebuffer_height);
                 else command.UserCallback(list, &command);
                 continue;
             }
