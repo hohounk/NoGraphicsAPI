@@ -686,6 +686,7 @@ int test_user_texture(gpu::Device* device, const char*) noexcept
     return failures ? 1 : 0;
 }
 
+// Wall-clock seconds. C has no portable monotonic clock before C23, so a clock step during a run skews that run.
 double seconds_now() noexcept
 {
     timespec now{};
@@ -693,7 +694,7 @@ double seconds_now() noexcept
     return double(now.tv_sec) + double(now.tv_nsec) * 1e-9;
 }
 
-// The CPU time of UpdateTextures and RenderDrawData on a 1280x720 target, over 1000 frames after 10 warm-up frames. Each frame draws the
+// The wall time of UpdateTextures and RenderDrawData on a 1280x720 target, over 1000 frames after 10 warm-up frames. Each frame draws the
 // ImGui demo window, which has few draw commands with its sections closed, and a window of 64 child windows, each with its own draw list.
 // The case reports the times and fails only when a resource cannot be created.
 int test_record_time(gpu::Device* device, const char*) noexcept

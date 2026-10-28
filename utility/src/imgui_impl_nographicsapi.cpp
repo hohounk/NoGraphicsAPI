@@ -258,7 +258,7 @@ void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandB
                                        gpu::Stage::transfer, gpu::Access::transfer_write);
             updated = true;
             gpu::Texture* destination = data->slots[uint32(texture->TexID)].texture;
-            // One upload of UpdateRect, the bounding box, replaces one per rect when the rects cover at least half of it.
+            // One upload of UpdateRect, the bounding box, replaces one per rect when the sum of the rect areas is at least half of its area.
             uint64 rect_texels = 0;
             for (const ImTextureRect& rect : texture->Updates) rect_texels += uint64(rect.w) * rect.h;
             if (rect_texels && uint64(texture->UpdateRect.w) * texture->UpdateRect.h <= 2 * rect_texels)
