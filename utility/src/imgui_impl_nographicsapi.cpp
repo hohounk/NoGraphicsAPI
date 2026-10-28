@@ -3,6 +3,7 @@
 #include "imgui_impl_nographicsapi_spirv.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -76,6 +77,18 @@ void upload_rect(gpu::CommandBuffer* commands, gpu::BumpAllocator& bump, gpu::Te
     });
 }
 
+// The value of ImGui::GetPlatformIO().DrawCallback_ResetRenderState. RenderDrawData compares against it and never calls it.
+void reset_render_state(const ImDrawList*, const ImDrawCmd*) noexcept
+{
+}
+
+void bind_render_state(const BackendData& data, gpu::CommandBuffer* commands) noexcept
+{
+    gpu::set_texture_descriptor_heap(commands, data.textures);
+    gpu::set_sampler_descriptor_heap(commands, data.samplers);
+    gpu::bind_pso(commands, data.pso);
+}
+
 } // namespace
 
 bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_InitInfo* info)
@@ -129,6 +142,7 @@ bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_InitInfo* info)
     io.BackendRendererUserData = data;
     io.BackendRendererName = "imgui_impl_nographicsapi";
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
+    ImGui::GetPlatformIO().DrawCallback_ResetRenderState = reset_render_state;
     return true;
 }
 
@@ -145,6 +159,7 @@ void ImGui_ImplNoGraphicsAPI_Shutdown()
     delete[] data->free_slots;
     delete[] data->slots;
     delete data;
+    ImGui::GetPlatformIO().DrawCallback_ResetRenderState = nullptr;
     io.BackendRendererName = nullptr;
     io.BackendRendererUserData = nullptr;
     io.BackendFlags &= ~(ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures);
@@ -202,4 +217,78 @@ void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandB
         }
     }
     if (copied) gpu::barrier(commands, gpu::Stage::transfer, gpu::Access::transfer_write, gpu::Stage::fragment, gpu::Access::shader_read);
+}
+
+void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump)
+{
+    const BackendData* data = static_cast<const BackendData*>(ImGui::GetIO().BackendRendererUserData);
+    assert(data && draw_data && commands && "call ImGui_ImplNoGraphicsAPI_Init first");
+    const float framebuffer_width = draw_data->DisplaySize.x * draw_data->FramebufferScale.x;
+    const float framebuffer_height = draw_data->DisplaySize.y * draw_data->FramebufferScale.y;
+    if (framebuffer_width <= 0.0f || framebuffer_height <= 0.0f || draw_data->CmdLists.Size == 0) return;
+
+    gpu::GpuCpuRange<ImGuiNgaVertex> vertices{};
+    gpu::GpuCpuRange<ImDrawIdx> indices{};
+    if (draw_data->TotalVtxCount > 0)
+    {
+        vertices = bump.allocate<ImGuiNgaVertex>(uint64(draw_data->TotalVtxCount));
+        indices = bump.allocate<ImDrawIdx>(uint64(draw_data->TotalIdxCount));
+        assert(vertices.size && indices.size && "the bump allocator has no room for the vertices and indices");
+        ImGuiNgaVertex* vertex_cursor = vertices.cpu;
+        ImDrawIdx* index_cursor = indices.cpu;
+        for (const ImDrawList* list : draw_data->CmdLists)
+        {
+            memcpy(vertex_cursor, list->VtxBuffer.Data, size_t(list->VtxBuffer.Size) * sizeof(ImDrawVert));
+            memcpy(index_cursor, list->IdxBuffer.Data, size_t(list->IdxBuffer.Size) * sizeof(ImDrawIdx));
+            vertex_cursor += list->VtxBuffer.Size;
+            index_cursor += list->IdxBuffer.Size;
+        }
+    }
+
+    constexpr gpu::IndexType index_type = sizeof(ImDrawIdx) == 2 ? gpu::IndexType::uint16 : gpu::IndexType::uint32;
+    const float2 scale{.x = 2.0f / draw_data->DisplaySize.x, .y = 2.0f / draw_data->DisplaySize.y};
+    const float2 translate{.x = -1.0f - draw_data->DisplayPos.x * scale.x, .y = -1.0f - draw_data->DisplayPos.y * scale.y};
+    const ImVec2 clip_offset = draw_data->DisplayPos;
+    const ImVec2 clip_scale = draw_data->FramebufferScale;
+    bind_render_state(*data, commands);
+
+    // The vertex pointer carries the vertex offset, because SV_VertexID excludes the base vertex of draw_indexed.
+    const ImGuiNgaRoot* root = nullptr;
+    uint32 root_texture = 0;
+    const ImGuiNgaVertex* root_vertices = nullptr;
+    uint32 vertex_base = 0;
+    uint32 index_base = 0;
+    for (const ImDrawList* list : draw_data->CmdLists)
+    {
+        for (const ImDrawCmd& command : list->CmdBuffer)
+        {
+            if (command.UserCallback)
+            {
+                if (command.UserCallback == reset_render_state) bind_render_state(*data, commands);
+                else command.UserCallback(list, &command);
+                continue;
+            }
+            const float min_x = fmaxf((command.ClipRect.x - clip_offset.x) * clip_scale.x, 0.0f);
+            const float min_y = fmaxf((command.ClipRect.y - clip_offset.y) * clip_scale.y, 0.0f);
+            const float max_x = fminf((command.ClipRect.z - clip_offset.x) * clip_scale.x, framebuffer_width);
+            const float max_y = fminf((command.ClipRect.w - clip_offset.y) * clip_scale.y, framebuffer_height);
+            if (max_x <= min_x || max_y <= min_y) continue;
+            gpu::set_scissor(commands, {.x = int32(min_x), .y = int32(min_y), .width = uint32(max_x - min_x), .height = uint32(max_y - min_y)});
+
+            const uint32 texture = uint32(command.GetTexID());
+            ImGuiNgaVertex* command_vertices = vertices.gpu + vertex_base + command.VtxOffset;
+            if (!root || texture != root_texture || command_vertices != root_vertices)
+            {
+                const gpu::GpuCpuRange<ImGuiNgaRoot> allocation = bump.allocate<ImGuiNgaRoot>();
+                assert(allocation.size && "the bump allocator has no room for a root");
+                *allocation.cpu = {.vertices = command_vertices, .texture = texture, .srgb = data->srgb, .scale = scale, .translate = translate};
+                root = allocation.gpu;
+                root_texture = texture;
+                root_vertices = command_vertices;
+            }
+            gpu::draw_indexed(commands, root, gpu::gpu_range(indices), index_type, command.ElemCount, 1, index_base + command.IdxOffset, 0);
+        }
+        vertex_base += uint32(list->VtxBuffer.Size);
+        index_base += uint32(list->IdxBuffer.Size);
+    }
 }

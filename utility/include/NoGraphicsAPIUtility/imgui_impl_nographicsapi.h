@@ -25,3 +25,9 @@ IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_NewFrame();
 // The staging bytes come from bump: a new texture costs width * height * 4 bytes, and each rect of a texture update costs
 // w * h * 4 bytes. Each of these allocations rounds up to 16 bytes.
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump);
+
+// Record inside a render pass on a color target of InitInfo::colorFormat, after UpdateTextures. One draw_indexed for each ImDrawCmd.
+// The bytes come from bump: TotalVtxCount * 20 bytes of vertices, TotalIdxCount * sizeof(ImDrawIdx) bytes of indices, and 32 bytes
+// for each root, each allocation rounded up to 16 bytes. A new root starts when the texture or the vertex offset changes.
+// It leaves the backend PSO, the backend texture and sampler descriptor heaps and the last scissor bound.
+IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump);

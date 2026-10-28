@@ -2,6 +2,7 @@
 #include <imgui_internal.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 namespace
@@ -39,6 +40,12 @@ int test_init(gpu::Device* device, const char*) noexcept
 }
 
 constexpr uint64 staging_bytes = 4ull << 20;
+constexpr uint32 target_width = 256;
+constexpr uint32 target_height = 160;
+constexpr uint64 target_bytes = uint64(target_width) * target_height * 4;
+constexpr gpu::ClearColor clear_color{.x = 0.25f, .y = 0.5f, .z = 0.75f, .w = 1.0f};
+constexpr ImGuiWindowFlags fixed_window_flags =
+    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
 
 struct Fixture
 {
@@ -66,14 +73,20 @@ void destroy_fixture(Fixture& fixture) noexcept
     fixture = {};
 }
 
-// One ImGui frame: the texture requests are recorded, submitted and finished before it returns.
-void run_frame(Fixture& fixture) noexcept
+// Starts one ImGui frame on a 256x160 display.
+void new_frame() noexcept
 {
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(256.0f, 160.0f);
+    io.DisplaySize = ImVec2(float(target_width), float(target_height));
     io.DeltaTime = 1.0f / 60.0f;
     ImGui_ImplNoGraphicsAPI_NewFrame();
     ImGui::NewFrame();
+}
+
+// One ImGui frame: the texture requests are recorded, submitted and finished before it returns.
+void run_frame(Fixture& fixture) noexcept
+{
+    new_frame();
     ImGui::Render();
     gpu::BumpAllocator bump(fixture.staging.range);
     gpu::reset_command_pool(fixture.pool);
@@ -145,6 +158,251 @@ int test_lifecycle(gpu::Device* device, const char*) noexcept
     return failures ? 1 : 0;
 }
 
+struct RenderTarget
+{
+    gpu::TextureHeap heap{};
+    gpu::Texture* texture = nullptr;
+    gpu::RenderView* view = nullptr;
+    gpu::GpuHeap readback{};
+};
+
+// A 256x160 color target, initialized, and a readback heap for its bytes.
+bool create_render_target(Fixture& fixture, RenderTarget& target, gpu::Format format) noexcept
+{
+    const gpu::TextureDesc desc{
+        .extent = {.x = target_width, .y = target_height, .z = 1},
+        .format = format,
+        .usage = gpu::TextureUsage::color_attachment | gpu::TextureUsage::transfer_source,
+    };
+    target.heap = gpu::create_texture_heap(fixture.device, gpu::get_texture_size_align(fixture.device, desc).size);
+    target.readback = gpu::create_gpu_heap(fixture.device, target_bytes, gpu::MemoryType::readback);
+    if (!target.heap.owner || !target.readback.owner) return false;
+    target.texture = gpu::create_texture(fixture.device, desc, target.heap, 0);
+    if (!target.texture) return false;
+    target.view = gpu::create_render_view(target.texture);
+    if (!target.view) return false;
+    gpu::reset_command_pool(fixture.pool);
+    gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
+    gpu::initialize_texture(commands, target.texture);
+    gpu::end_commands(commands);
+    ++fixture.completion.value;
+    gpu::submit(fixture.device, {.commands = {commands}, .completion = fixture.completion});
+    gpu::wait_timeline(fixture.completion);
+    return true;
+}
+
+void destroy_render_target(RenderTarget& target) noexcept
+{
+    gpu::destroy_render_view(target.view);
+    gpu::destroy_texture(target.texture);
+    gpu::destroy_texture_heap(target.heap);
+    gpu::destroy_gpu_heap(target.readback);
+    target = {};
+}
+
+// Ends the ImGui frame that new_frame began and draws it into the target, cleared to clear_color. The work is finished before it
+// returns. With read_back, target.readback holds the bytes of the target afterwards.
+void render_frame(Fixture& fixture, RenderTarget& target, bool read_back) noexcept
+{
+    ImGui::Render();
+    ImDrawData* draw_data = ImGui::GetDrawData();
+    gpu::BumpAllocator bump(fixture.staging.range);
+    gpu::reset_command_pool(fixture.pool);
+    gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
+    ImGui_ImplNoGraphicsAPI_UpdateTextures(draw_data, commands, bump);
+    const gpu::ColorAttachment color{.render_view = target.view, .load = gpu::LoadOp::clear, .clear = clear_color};
+    gpu::begin_render_pass(commands, {.colors = {&color, 1}});
+    ImGui_ImplNoGraphicsAPI_RenderDrawData(draw_data, commands, bump);
+    gpu::end_render_pass(commands);
+    if (read_back)
+    {
+        gpu::barrier(commands, gpu::Stage::color_output, gpu::Access::color_write, gpu::Stage::transfer, gpu::Access::transfer_read);
+        gpu::copy_texture_to_memory(commands, target.texture, gpu::gpu_range(target.readback));
+        gpu::barrier(commands, gpu::Stage::transfer, gpu::Access::transfer_write, gpu::Stage::host, gpu::Access::host_read);
+    }
+    gpu::end_commands(commands);
+    ++fixture.completion.value;
+    gpu::submit(fixture.device, {.commands = {commands}, .completion = fixture.completion});
+    gpu::wait_timeline(fixture.completion);
+}
+
+// True when a channel of the pixel (x, y) of the read-back target differs by more than 8 from the pixel (reference_x, reference_y).
+bool pixel_differs(const RenderTarget& target, uint32 x, uint32 y, uint32 reference_x, uint32 reference_y) noexcept
+{
+    const uint8* pixel = target.readback.range.cpu + (uint64(y) * target_width + x) * 4;
+    const uint8* reference = target.readback.range.cpu + (uint64(reference_y) * target_width + reference_x) * 4;
+    for (uint32 channel = 0; channel < 4; ++channel)
+        if (abs(int(pixel[channel]) - int(reference[channel])) > 8) return true;
+    return false;
+}
+
+// Without golden_output, the third frame is compared with golden/imgui_backend.rgba, relative to the working directory.
+// With golden_output, the third frame is written to that path instead.
+int test_golden(gpu::Device* device, const char* golden_output) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!create_fixture(fixture, device) || !create_render_target(fixture, target, gpu::Format::rgba8_unorm))
+    {
+        destroy_render_target(target);
+        destroy_fixture(fixture);
+        return check(false, "the fixture and the render target are created");
+    }
+    // An Alpha8 atlas draws the same pixels as the default RGBA32 one, and takes the Alpha8 path of the texture upload.
+    ImGui::GetIO().Fonts->TexDesiredFormat = ImTextureFormat_Alpha8;
+    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = gpu::Format::rgba8_unorm};
+    if (!ImGui_ImplNoGraphicsAPI_Init(&info))
+    {
+        destroy_render_target(target);
+        destroy_fixture(fixture);
+        return check(false, "Init returns true");
+    }
+    int failures = 0;
+
+    // Four columns: red, green, blue and white. After the first frame, an update paints the center 2x2 texels yellow.
+    ImTextureData user;
+    user.Create(ImTextureFormat_RGBA32, 4, 4);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+        {
+            uint8* pixel = static_cast<uint8*>(user.GetPixelsAt(x, y));
+            pixel[0] = x == 0 || x == 3 ? 255 : 0;
+            pixel[1] = x == 1 || x == 3 ? 255 : 0;
+            pixel[2] = x == 2 || x == 3 ? 255 : 0;
+            pixel[3] = 255;
+        }
+    ImGui::RegisterUserTexture(&user);
+
+    float slider = 0.5f;
+    for (uint32 frame = 0; frame < 3; ++frame)
+    {
+        new_frame();
+        ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f));
+        ImGui::SetNextWindowSize(ImVec2(240.0f, 144.0f));
+        ImGui::Begin("Golden", nullptr, fixed_window_flags);
+        ImGui::Text("NoGraphicsAPI");
+        ImGui::Button("Button");
+        ImGui::SliderFloat("Slider", &slider, 0.0f, 1.0f);
+        ImGui::ColorButton("Color", ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+        ImGui::SameLine();
+        ImGui::Image(user.GetTexRef(), ImVec2(32.0f, 32.0f));
+        ImGui::End();
+        render_frame(fixture, target, frame == 2);
+        if (frame == 0)
+        {
+            const ImTextureRect rect{.x = 1, .y = 1, .w = 2, .h = 2};
+            for (int y = 1; y < 3; ++y)
+                for (int x = 1; x < 3; ++x)
+                {
+                    uint8* pixel = static_cast<uint8*>(user.GetPixelsAt(x, y));
+                    pixel[0] = 255;
+                    pixel[1] = 255;
+                    pixel[2] = 0;
+                }
+            user.Updates.push_back(rect);
+            user.UpdateRect = rect;
+            user.SetStatus(ImTextureStatus_WantUpdates);
+        }
+    }
+    failures += check(ImGui::GetIO().Fonts->TexData->Format == ImTextureFormat_Alpha8, "the font atlas of the golden is Alpha8");
+    failures += check(user.Status == ImTextureStatus_OK, "the user texture update is done");
+
+    if (golden_output)
+    {
+        FILE* file = fopen(golden_output, "wb");
+        const bool written = file && fwrite(target.readback.range.cpu, 1, target_bytes, file) == target_bytes;
+        if (file) fclose(file);
+        failures += check(written, "the third frame is written to the golden output path");
+    }
+    else
+    {
+        FILE* file = fopen("golden/imgui_backend.rgba", "rb");
+        uint8 row[target_width * 4];
+        uint32 rows = 0;
+        uint32 differing = 0;
+        for (; file && rows < target_height && fread(row, 1, sizeof(row), file) == sizeof(row); ++rows)
+            for (uint32 index = 0; index < sizeof(row); ++index)
+                differing += abs(int(row[index]) - int(target.readback.range.cpu[rows * sizeof(row) + index])) > 8;
+        if (file) fclose(file);
+        if (differing) fprintf(stderr, "%u channels differ from the golden by more than 8\n", differing);
+        failures += check(rows == target_height, "golden/imgui_backend.rgba holds 256x160 RGBA8 pixels");
+        failures += check(rows == target_height && differing == 0, "the third frame matches the golden within 8");
+    }
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    ImGui::UnregisterUserTexture(&user);
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
+void count_callback(const ImDrawList*, const ImDrawCmd* command) noexcept
+{
+    ++*static_cast<uint32*>(command->UserCallbackData);
+}
+
+int test_scissor(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!create_fixture(fixture, device) || !create_render_target(fixture, target, gpu::Format::rgba8_unorm))
+    {
+        destroy_render_target(target);
+        destroy_fixture(fixture);
+        return check(false, "the fixture and the render target are created");
+    }
+    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = gpu::Format::rgba8_unorm};
+    if (!ImGui_ImplNoGraphicsAPI_Init(&info))
+    {
+        destroy_render_target(target);
+        destroy_fixture(fixture);
+        return check(false, "Init returns true");
+    }
+    int failures = 0;
+    failures += check(ImGui::GetPlatformIO().DrawCallback_ResetRenderState != nullptr, "Init sets DrawCallback_ResetRenderState");
+
+    // The first window reaches past the top-left corner. It holds a rect whose clip rect exceeds the target on every side, and a circle
+    // whose clip rect lies outside the target. The circle gives the first draw list more vertices than the second one indexes, so a
+    // draw that ignores the vertex base of the second list draws only geometry of the first. The second window reaches past the
+    // bottom-right corner.
+    uint32 callback_count = 0;
+    for (uint32 frame = 0; frame < 3; ++frame)
+    {
+        new_frame();
+        ImGui::SetNextWindowPos(ImVec2(-40.0f, -30.0f));
+        ImGui::SetNextWindowSize(ImVec2(120.0f, 90.0f));
+        ImGui::Begin("Top left", nullptr, fixed_window_flags);
+        ImGui::Text("Top left");
+        ImDrawList* list = ImGui::GetWindowDrawList();
+        list->PushClipRect(ImVec2(-64.0f, -64.0f), ImVec2(320.0f, 224.0f));
+        list->AddRectFilled(ImVec2(100.0f, 60.0f), ImVec2(150.0f, 90.0f), IM_COL32(255, 0, 255, 255));
+        list->PopClipRect();
+        list->PushClipRect(ImVec2(300.0f, 200.0f), ImVec2(340.0f, 240.0f));
+        list->AddCircleFilled(ImVec2(320.0f, 220.0f), 16.0f, IM_COL32(255, 0, 255, 255), 64);
+        list->PopClipRect();
+        ImGui::End();
+        ImGui::SetNextWindowPos(ImVec2(176.0f, 100.0f));
+        ImGui::SetNextWindowSize(ImVec2(120.0f, 90.0f));
+        ImGui::Begin("Bottom right", nullptr, fixed_window_flags);
+        ImGui::GetWindowDrawList()->AddCallback(count_callback, &callback_count);
+        ImGui::GetWindowDrawList()->AddCallback(ImGui::GetPlatformIO().DrawCallback_ResetRenderState, nullptr);
+        ImGui::Text("Bottom right");
+        ImGui::End();
+        render_frame(fixture, target, frame == 2);
+    }
+    // (30, 130) is covered by nothing, so it holds the clear color.
+    failures += check(pixel_differs(target, 20, 20, 30, 130), "the window off the top-left corner is drawn");
+    failures += check(pixel_differs(target, 230, 140, 30, 130), "the window off the bottom-right corner is drawn");
+    failures += check(pixel_differs(target, 125, 75, 30, 130), "a rect whose clip rect exceeds the target is drawn");
+    failures += check(callback_count == 3, "RenderDrawData calls the user callback once in each frame");
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    failures += check(ImGui::GetPlatformIO().DrawCallback_ResetRenderState == nullptr, "Shutdown clears DrawCallback_ResetRenderState");
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
 struct TestCase
 {
     const char* name;
@@ -154,6 +412,8 @@ struct TestCase
 const TestCase test_cases[] = {
     {.name = "init", .run = test_init},
     {.name = "lifecycle", .run = test_lifecycle},
+    {.name = "golden", .run = test_golden},
+    {.name = "scissor", .run = test_scissor},
 };
 
 } // namespace
