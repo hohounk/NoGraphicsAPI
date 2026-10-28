@@ -83,6 +83,7 @@ On macOS, `tools/check_root_layouts.py` scans `GPU_ROOT` declarations and checks
 and array stride using compiled C++, SPIR-V reflection, and native Metal compiler assertions. Pass shader/header
 directories, `--include` paths, `--slang /path/to/slangc`, and `--output build/root-layouts`. Use this after editing roots;
 16-byte total size alone cannot detect incompatible field offsets.
+On any platform, `--skip-metal` checks C++ and SPIR-V only. The ctest `test_root_layouts` runs it over the repository roots.
 
 Recompile Vulkan shaders when adopting this ABI: the push payload is now eight bytes, not the root
 structure itself. The binding uses `VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT`; no buffer descriptor is allocated.
