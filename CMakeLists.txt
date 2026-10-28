@@ -14,6 +14,8 @@ include(CMakePackageConfigHelpers)
 
 option(NOGRAPHICSAPI_BUILD_EXAMPLES "Build NoGraphicsAPI examples" OFF)
 option(NOGRAPHICSAPI_BUILD_TESTS "Build NoGraphicsAPI tests" OFF)
+option(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND "Build the Dear ImGui renderer backend NoGraphicsAPI::ImGuiBackend (Vulkan only)" OFF)
+set(NOGRAPHICSAPI_IMGUI_TARGET imgui CACHE STRING "The imgui target that NoGraphicsAPI::ImGuiBackend links")
 
 # CMake adds /EHsc to MSVC's default flags. Remove it before adding the explicit
 # no-exceptions mode below so cl.exe does not report an option-override warning.
@@ -87,6 +89,10 @@ endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(NoGraphicsAPI PRIVATE -Wno-missing-field-initializers)
+endif()
+
+if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND AND (NOGRAPHICSAPI_BUILD_TESTS OR NOGRAPHICSAPI_BUILD_EXAMPLES) AND NOT TARGET ${NOGRAPHICSAPI_IMGUI_TARGET})
+    include(cmake/NoGraphicsAPI_imgui.cmake)
 endif()
 
 add_subdirectory(utility)
