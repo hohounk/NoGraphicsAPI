@@ -372,7 +372,7 @@ if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND)
     add_executable(test_imgui_backend imgui_backend_test.cpp)
     NoGraphicsAPI_disable_exceptions(test_imgui_backend)
     target_link_libraries(test_imgui_backend PRIVATE NoGraphicsAPI::ImGuiBackend)
-    foreach(imgui_case IN ITEMS init)
+    foreach(imgui_case IN ITEMS init lifecycle)
         add_test(NAME test_imgui_backend_${imgui_case} COMMAND test_imgui_backend ${imgui_case})
         set_tests_properties(test_imgui_backend_${imgui_case} PROPERTIES
             SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")

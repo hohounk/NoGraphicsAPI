@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <stddef.h>
+#include <string.h>
 
 #if defined(IMGUI_USE_BGRA_PACKED_COLOR)
 #error "The shader reads ImDrawVert::col as RGBA8: IMGUI_USE_BGRA_PACKED_COLOR is not supported"
@@ -42,6 +43,37 @@ void release_texture(BackendData& data, ImTextureData* texture) noexcept
     data.free_slots[data.free_count++] = slot;
     texture->SetTexID(ImTextureID_Invalid);
     texture->SetStatus(ImTextureStatus_Destroyed);
+}
+
+// Packs the rect as RGBA8 into bump storage and records its copy. Alpha8 texels become white with that alpha.
+void upload_rect(gpu::CommandBuffer* commands, gpu::BumpAllocator& bump, gpu::Texture* destination, ImTextureData* texture, ImTextureRect rect) noexcept
+{
+    const uint64 row_bytes = uint64(rect.w) * 4;
+    const gpu::GpuCpuRange<byte> staging = bump.allocate(row_bytes * rect.h);
+    assert(staging.size && "the bump allocator has no room for the texture bytes");
+    for (uint32 y = 0; y < rect.h; ++y)
+    {
+        const byte* source = static_cast<const byte*>(texture->GetPixelsAt(rect.x, rect.y + int(y)));
+        byte* row = staging.cpu + y * row_bytes;
+        if (texture->Format == ImTextureFormat_RGBA32)
+        {
+            memcpy(row, source, size_t(row_bytes));
+        }
+        else
+        {
+            for (uint32 x = 0; x < rect.w; ++x)
+            {
+                row[x * 4 + 0] = 255;
+                row[x * 4 + 1] = 255;
+                row[x * 4 + 2] = 255;
+                row[x * 4 + 3] = source[x];
+            }
+        }
+    }
+    gpu::copy_memory_to_texture(commands, gpu::gpu_range(staging), destination, {
+        .offset = {.x = rect.x, .y = rect.y, .z = 0},
+        .extent = {.x = rect.w, .y = rect.h, .z = 1},
+    });
 }
 
 } // namespace
@@ -121,4 +153,48 @@ void ImGui_ImplNoGraphicsAPI_Shutdown()
 void ImGui_ImplNoGraphicsAPI_NewFrame()
 {
     assert(ImGui::GetIO().BackendRendererUserData && "call ImGui_ImplNoGraphicsAPI_Init first");
+}
+
+void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump)
+{
+    BackendData* data = static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData);
+    assert(data && draw_data && commands && "call ImGui_ImplNoGraphicsAPI_Init first");
+    if (!draw_data->Textures) return;
+    bool copied = false;
+    for (ImTextureData* texture : *draw_data->Textures)
+    {
+        if (texture->Status == ImTextureStatus_WantCreate)
+        {
+            assert(texture->Width > 0 && texture->Height > 0 && data->free_count && "maxTextures is exhausted");
+            const uint32 slot = data->free_slots[--data->free_count];
+            const gpu::TextureDesc desc{
+                .extent = {.x = uint32(texture->Width), .y = uint32(texture->Height), .z = 1},
+                .format = gpu::Format::rgba8_unorm,
+                .usage = gpu::TextureUsage::sampled | gpu::TextureUsage::transfer_destination,
+            };
+            TextureSlot& entry = data->slots[slot];
+            entry.heap = gpu::create_texture_heap(data->device, gpu::get_texture_size_align(data->device, desc).size);
+            entry.texture = gpu::create_texture(data->device, desc, entry.heap, 0);
+            assert(entry.texture && "texture creation failed");
+            gpu::initialize_texture(commands, entry.texture);
+            gpu::write_texture_descriptor(data->textures, slot, entry.texture, gpu::TextureDescriptorType::sampled);
+            upload_rect(commands, bump, entry.texture, texture,
+                        {.x = 0, .y = 0, .w = uint16(texture->Width), .h = uint16(texture->Height)});
+            texture->SetTexID(ImTextureID(slot));
+            texture->SetStatus(ImTextureStatus_OK);
+            copied = true;
+        }
+        else if (texture->Status == ImTextureStatus_WantUpdates)
+        {
+            gpu::Texture* destination = data->slots[uint32(texture->TexID)].texture;
+            for (const ImTextureRect& rect : texture->Updates) upload_rect(commands, bump, destination, texture, rect);
+            texture->SetStatus(ImTextureStatus_OK);
+            copied = true;
+        }
+        else if (texture->Status == ImTextureStatus_WantDestroy && texture->UnusedFrames >= int(data->frames_in_flight))
+        {
+            release_texture(*data, texture);
+        }
+    }
+    if (copied) gpu::barrier(commands, gpu::Stage::transfer, gpu::Access::transfer_write, gpu::Stage::fragment, gpu::Access::shader_read);
 }

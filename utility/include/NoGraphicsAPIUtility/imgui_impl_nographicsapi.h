@@ -21,3 +21,6 @@ IMGUI_IMPL_API bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_I
 // Call after wait_idle. Destroys every texture of ImGui::GetPlatformIO().Textures.
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_Shutdown();
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_NewFrame();
+// Record outside a render pass, before RenderDrawData. Creates, updates and destroys the textures of data->Textures.
+// The staging bytes come from bump: a new texture costs width * height * 4 bytes.
+IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump);
