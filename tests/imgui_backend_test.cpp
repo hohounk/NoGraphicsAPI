@@ -417,6 +417,49 @@ int test_scissor(gpu::Device* device, const char*) noexcept
     return failures ? 1 : 0;
 }
 
+// One opaque quad, drawn with the white texel of the font atlas into an rgba8_srgb target. The backend converts the vertex color to
+// linear and the target converts it back, so the target holds the bytes of the vertex color.
+int test_srgb(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!create_fixture(fixture, device) || !create_render_target(fixture, target, gpu::Format::rgba8_srgb))
+    {
+        destroy_render_target(target);
+        destroy_fixture(fixture);
+        return check(false, "the fixture and the render target are created");
+    }
+    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = gpu::Format::rgba8_srgb};
+    if (!ImGui_ImplNoGraphicsAPI_Init(&info))
+    {
+        destroy_render_target(target);
+        destroy_fixture(fixture);
+        return check(false, "Init returns true");
+    }
+
+    // Mid values, because 0 and 255 read back the same with and without the conversion.
+    const uint8 color[4] = {64, 128, 192, 255};
+    for (uint32 frame = 0; frame < 2; ++frame)
+    {
+        new_frame();
+        ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(32.0f, 32.0f), ImVec2(224.0f, 128.0f), IM_COL32(color[0], color[1], color[2], color[3]));
+        render_frame(fixture, target, frame == 1);
+    }
+    // (128, 80) is the center of the quad.
+    const uint8* pixel = target.readback.range.cpu + (uint64(80) * target_width + 128) * 4;
+    bool matches = true;
+    for (uint32 channel = 0; channel < 4; ++channel) matches = matches && abs(int(pixel[channel]) - int(color[channel])) <= 1;
+    if (!matches)
+        fprintf(stderr, "read back %d %d %d %d for the vertex color %d %d %d %d\n", pixel[0], pixel[1], pixel[2], pixel[3], color[0], color[1], color[2],
+                color[3]);
+    const int failures = check(matches, "an rgba8_srgb target reads back the vertex color within 1");
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures;
+}
+
 struct TestCase
 {
     const char* name;
@@ -428,6 +471,7 @@ const TestCase test_cases[] = {
     {.name = "lifecycle", .run = test_lifecycle},
     {.name = "golden", .run = test_golden},
     {.name = "scissor", .run = test_scissor},
+    {.name = "srgb", .run = test_srgb},
 };
 
 } // namespace
