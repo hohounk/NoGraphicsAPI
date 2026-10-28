@@ -150,6 +150,13 @@ it here.
    resolution and its reason in the commit or merge message.
 4. Replace `integration` with the new `main`. Merge the queue branches with
    `--no-ff` in the same order. Run the gate.
+   This clone has `rerere.enabled`, and `gc.rerereResolved` is 3650 days. git
+   replays a recorded resolution of a joint that no single topic holds, such
+   as the end of `present_case` from 65cf2ad (nga-col.33). After each merge,
+   `git rerere status` must print nothing. Check the replayed file against the
+   merge message of the previous joint before the commit. The `rr-cache` is
+   local to this clone and has no backup. When it is lost, the merge message
+   holds the resolution.
 5. Consumers move their pin to the new `integration` SHA.
 
 ## clangd
