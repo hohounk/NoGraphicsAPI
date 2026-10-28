@@ -28,5 +28,5 @@ VertexOutput vertexMain(uint vertex_id : SV_VertexID)
 float4 fragmentMain(VertexOutput input) : SV_Target0
 {
     Texture2D<float4> texture = gpu_texture<Texture2D<float4>>(root.texture);
-    return input.color * texture.Sample(gpu_sampler(0), input.uv);
+    return input.color * texture.Sample(gpu_sampler(root.sampler), input.uv);
 }

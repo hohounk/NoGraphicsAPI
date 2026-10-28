@@ -13,7 +13,7 @@
 static_assert(sizeof(ImDrawVert) == sizeof(ImGuiNgaVertex) && offsetof(ImDrawVert, pos) == offsetof(ImGuiNgaVertex, position) &&
               offsetof(ImDrawVert, uv) == offsetof(ImGuiNgaVertex, uv) && offsetof(ImDrawVert, col) == offsetof(ImGuiNgaVertex, color));
 static_assert(sizeof(ImGuiNgaVertex) == 20);
-static_assert(sizeof(ImGuiNgaRoot) == 32);
+static_assert(sizeof(ImGuiNgaRoot) == 40);
 
 namespace
 {
@@ -34,6 +34,7 @@ struct BackendData
     uint32 max_textures = 0;
     uint32 frames_in_flight = 0;
     uint32 srgb = 0;
+    uint32 sampler = 0; // The sampler descriptor of the draws that follow: 0 linear, 1 nearest.
 };
 
 void release_texture(BackendData& data, ImTextureData* texture) noexcept
@@ -80,6 +81,18 @@ void reset_render_state(const ImDrawList*, const ImDrawCmd*) noexcept
 {
 }
 
+// The values of DrawCallback_SetSamplerLinear and DrawCallback_SetSamplerNearest. RenderDrawData calls them. Their bodies differ, so that
+// identical code folding cannot give them the address of reset_render_state.
+void set_sampler_linear(const ImDrawList*, const ImDrawCmd*) noexcept
+{
+    static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData)->sampler = 0;
+}
+
+void set_sampler_nearest(const ImDrawList*, const ImDrawCmd*) noexcept
+{
+    static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData)->sampler = 1;
+}
+
 void bind_render_state(const BackendData& data, gpu::CommandBuffer* commands, float width, float height) noexcept
 {
     gpu::set_viewport(commands, {.width = width, .height = height});
@@ -110,7 +123,7 @@ bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_InitInfo* info)
         }},
     });
     gpu::TextureDescriptorHeap* textures = gpu::create_texture_descriptor_heap(info->device, info->maxTextures + 1);
-    gpu::SamplerDescriptorHeap* samplers = gpu::create_sampler_descriptor_heap(info->device, 1);
+    gpu::SamplerDescriptorHeap* samplers = gpu::create_sampler_descriptor_heap(info->device, 2);
     if (!pso || !textures || !samplers)
     {
         gpu::destroy_sampler_descriptor_heap(samplers);
@@ -119,6 +132,14 @@ bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_InitInfo* info)
         return false;
     }
     gpu::write_sampler_descriptor(samplers, 0, {
+        .address_u = gpu::AddressMode::clamp_to_edge,
+        .address_v = gpu::AddressMode::clamp_to_edge,
+        .address_w = gpu::AddressMode::clamp_to_edge,
+    });
+    gpu::write_sampler_descriptor(samplers, 1, {
+        .min_filter = gpu::Filter::nearest,
+        .mag_filter = gpu::Filter::nearest,
+        .mip_filter = gpu::Filter::nearest,
         .address_u = gpu::AddressMode::clamp_to_edge,
         .address_v = gpu::AddressMode::clamp_to_edge,
         .address_w = gpu::AddressMode::clamp_to_edge,
@@ -138,7 +159,10 @@ bool ImGui_ImplNoGraphicsAPI_Init(const ImGui_ImplNoGraphicsAPI_InitInfo* info)
     io.BackendRendererUserData = data;
     io.BackendRendererName = "imgui_impl_nographicsapi";
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
-    ImGui::GetPlatformIO().DrawCallback_ResetRenderState = reset_render_state;
+    ImGuiPlatformIO& platform = ImGui::GetPlatformIO();
+    platform.DrawCallback_ResetRenderState = reset_render_state;
+    platform.DrawCallback_SetSamplerLinear = set_sampler_linear;
+    platform.DrawCallback_SetSamplerNearest = set_sampler_nearest;
     return true;
 }
 
@@ -154,7 +178,10 @@ void ImGui_ImplNoGraphicsAPI_Shutdown()
     gpu::destroy_pso(data->pso);
     delete[] data->slots;
     delete data;
-    ImGui::GetPlatformIO().DrawCallback_ResetRenderState = nullptr;
+    ImGuiPlatformIO& platform = ImGui::GetPlatformIO();
+    platform.DrawCallback_ResetRenderState = nullptr;
+    platform.DrawCallback_SetSamplerLinear = nullptr;
+    platform.DrawCallback_SetSamplerNearest = nullptr;
     io.BackendRendererName = nullptr;
     io.BackendRendererUserData = nullptr;
     io.BackendFlags &= ~(ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures);
@@ -218,7 +245,7 @@ void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* draw_data, gpu::CommandB
 
 void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump)
 {
-    const BackendData* data = static_cast<const BackendData*>(ImGui::GetIO().BackendRendererUserData);
+    BackendData* data = static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData);
     assert(data && draw_data && commands && "call ImGui_ImplNoGraphicsAPI_Init first");
     const float framebuffer_width = draw_data->DisplaySize.x * draw_data->FramebufferScale.x;
     const float framebuffer_height = draw_data->DisplaySize.y * draw_data->FramebufferScale.y;
@@ -246,10 +273,12 @@ void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandB
     const float2 scale{.x = 2.0f / draw_data->DisplaySize.x, .y = 2.0f / draw_data->DisplaySize.y};
     const float2 translate{.x = -1.0f - draw_data->DisplayPos.x * scale.x, .y = -1.0f - draw_data->DisplayPos.y * scale.y};
     bind_render_state(*data, commands, framebuffer_width, framebuffer_height);
+    data->sampler = 0;
 
     // The vertex pointer carries the vertex offset, because SV_VertexID excludes the base vertex of draw_indexed.
     const ImGuiNgaRoot* root = nullptr;
     uint32 root_texture = 0; // ImTextureID_Invalid, which no draw uses.
+    uint32 root_sampler = 0;
     const ImGuiNgaVertex* root_vertices = nullptr;
     uint32 vertex_base = 0;
     uint32 index_base = 0;
@@ -260,7 +289,12 @@ void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandB
         {
             if (command.UserCallback)
             {
-                if (command.UserCallback == reset_render_state) bind_render_state(*data, commands, framebuffer_width, framebuffer_height);
+                if (command.UserCallback == reset_render_state)
+                {
+                    bind_render_state(*data, commands, framebuffer_width, framebuffer_height);
+                    data->sampler = 0;
+                }
+                else if (command.UserCallback == set_sampler_linear || command.UserCallback == set_sampler_nearest) command.UserCallback(list, &command);
                 else
                 {
                     command.UserCallback(list, &command);
@@ -282,14 +316,16 @@ void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandB
 
             const uint32 texture = uint32(command.GetTexID());
             ImGuiNgaVertex* command_vertices = vertices.gpu + vertex_base + command.VtxOffset;
-            if (texture != root_texture || command_vertices != root_vertices)
+            if (texture != root_texture || command_vertices != root_vertices || data->sampler != root_sampler)
             {
                 const gpu::GpuCpuRange<ImGuiNgaRoot> allocation = bump.allocate<ImGuiNgaRoot>();
                 assert(allocation.size && "the bump allocator has no room for a root");
-                *allocation.cpu = {.vertices = command_vertices, .texture = texture, .srgb = data->srgb, .scale = scale, .translate = translate};
+                *allocation.cpu = {
+                    .vertices = command_vertices, .texture = texture, .srgb = data->srgb, .sampler = data->sampler, .scale = scale, .translate = translate};
                 root = allocation.gpu;
                 root_texture = texture;
                 root_vertices = command_vertices;
+                root_sampler = data->sampler;
             }
             gpu::draw_indexed(commands, root, gpu::gpu_range(indices), index_type, command.ElemCount, 1, index_base + command.IdxOffset, 0);
         }

@@ -17,7 +17,7 @@ Do not define `IMGUI_USE_BGRA_PACKED_COLOR`. The shader reads `ImDrawVert::col` 
 
 Call `ImGui_ImplNoGraphicsAPI_Init` once, before the first frame. You must set `InitInfo::device` and `InitInfo::colorFormat`.
 `maxTextures` and `framesInFlight` must not be zero. Init asserts each of these conditions.
-`ImGui_ImplNoGraphicsAPI_Init` creates the PSO for `InitInfo::colorFormat`, the descriptor heaps and the sampler.
+`ImGui_ImplNoGraphicsAPI_Init` creates the PSO for `InitInfo::colorFormat`, the descriptor heaps and two samplers, linear and nearest.
 In each frame:
 
 1. Call `ImGui_ImplNoGraphicsAPI_NewFrame`, the `NewFrame` of your platform backend, and `ImGui::NewFrame`.
@@ -46,7 +46,7 @@ Do not reset or reuse that memory until the GPU completes the frame.
 | Call | Bytes |
 | --- | --- |
 | `UpdateTextures` | `width * height * 4` for each new texture, and `w * h * 4` for each rect of a texture update |
-| `RenderDrawData` | `TotalVtxCount * 20` of vertices, `TotalIdxCount * sizeof(ImDrawIdx)` of indices, and 32 for each root |
+| `RenderDrawData` | `TotalVtxCount * 20` of vertices, `TotalIdxCount * sizeof(ImDrawIdx)` of indices, and 40 for each root |
 
 Each allocation rounds up to 16 bytes. The largest single need is a new font atlas.
 When ImGui grows the atlas, it asks for a new texture of the larger size.
@@ -63,9 +63,9 @@ The backend creates each texture as `rgba8_unorm`, and expands an `ImTextureForm
 To show your own image, put its pixels in an `ImTextureData` and register it with `ImGui::RegisterUserTexture`.
 The backend has no call that adds a `gpu::Texture` that you create.
 
-The draws read a 32-byte root, [`ImGuiNgaRoot`](../utility/src/imgui_impl_nographicsapi_shared.h).
-It holds a GPU pointer to the vertices, the texture slot, the sRGB flag, and the scale and translation of the display.
-A new root starts when the texture or the vertex pointer changes, so a frame uses at most one root for each `ImDrawCmd`.
+The draws read a 40-byte root, [`ImGuiNgaRoot`](../utility/src/imgui_impl_nographicsapi_shared.h).
+It holds a GPU pointer to the vertices, the texture slot, the sRGB flag, the sampler, and the scale and translation of the display.
+A new root starts when the texture, the vertex pointer or the sampler changes, so a frame uses at most one root for each `ImDrawCmd`.
 The vertex shader reads the vertices through the pointer, with no vertex input state.
 The pointer includes `ImDrawCmd::VtxOffset`, because `SV_VertexID` excludes the base vertex of `draw_indexed`.
 
@@ -76,6 +76,10 @@ It sets the scissor of each draw command. These bindings stay after the call.
 Bind your own PSO, heaps, viewport and scissor again before you record more draws in the same command buffer.
 A user callback of `ImDrawList::AddCallback` runs during the call. If the callback changes the state,
 add `ImGui::GetPlatformIO().DrawCallback_ResetRenderState` after it. This callback binds the state of the backend again.
+
+The draws sample with a linear sampler. Add `DrawCallback_SetSamplerNearest` of the platform IO to a draw list to sample the draws
+after it with nearest filtering, for example for pixel art, and `DrawCallback_SetSamplerLinear` to go back.
+`DrawCallback_ResetRenderState` and the start of each `RenderDrawData` select linear again. All samplers clamp to the edge.
 
 ## sRGB targets
 

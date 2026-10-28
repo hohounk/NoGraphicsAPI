@@ -513,6 +513,95 @@ int test_scale(gpu::Device* device, const char*) noexcept
     return failures ? 1 : 0;
 }
 
+// Red under nearest sampling: the last pixel of the red texel column.
+bool is_nearest(const uint8* pixel) noexcept
+{
+    return pixel[0] >= 250 && pixel[1] <= 5;
+}
+
+// A red-green blend under linear sampling, about (135, 120, 0).
+bool is_linear(const uint8* pixel) noexcept
+{
+    return pixel[0] >= 64 && pixel[0] <= 192 && pixel[1] >= 64 && pixel[1] <= 192;
+}
+
+// Six 64x64 images of a 4x4 texture, so one texel spans 16 pixels. The callback before each image selects its sampler. Z comes first,
+// with no callback, and the frame before ends under nearest, so Z shows that each RenderDrawData starts linear.
+int test_sampler(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
+    const ImGuiPlatformIO& platform = ImGui::GetPlatformIO();
+    int failures = 0;
+    failures += check(platform.DrawCallback_SetSamplerLinear != nullptr, "Init sets DrawCallback_SetSamplerLinear");
+    failures += check(platform.DrawCallback_SetSamplerNearest != nullptr, "Init sets DrawCallback_SetSamplerNearest");
+    if (failures)
+    {
+        ImGui_ImplNoGraphicsAPI_Shutdown();
+        destroy_render_target(target);
+        destroy_fixture(fixture);
+        return 1;
+    }
+
+    // Four columns: red, green, blue and white.
+    ImTextureData user;
+    user.Create(ImTextureFormat_RGBA32, 4, 4);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+        {
+            uint8* pixel = static_cast<uint8*>(user.GetPixelsAt(x, y));
+            pixel[0] = x == 0 || x == 3 ? 255 : 0;
+            pixel[1] = x == 1 || x == 3 ? 255 : 0;
+            pixel[2] = x == 2 || x == 3 ? 255 : 0;
+            pixel[3] = 255;
+        }
+    ImGui::RegisterUserTexture(&user);
+
+    struct Image
+    {
+        const char* name;
+        ImDrawCallback callback;
+        float x;
+        float y;
+        bool nearest;
+    };
+    const Image images[] = {
+        {.name = "Z, first in the frame", .callback = nullptr, .x = 0.0f, .y = 80.0f, .nearest = false},
+        {.name = "A, after SetSamplerNearest", .callback = platform.DrawCallback_SetSamplerNearest, .x = 0.0f, .y = 0.0f, .nearest = true},
+        {.name = "B, after ResetRenderState", .callback = platform.DrawCallback_ResetRenderState, .x = 64.0f, .y = 0.0f, .nearest = false},
+        {.name = "C, after SetSamplerNearest", .callback = platform.DrawCallback_SetSamplerNearest, .x = 128.0f, .y = 0.0f, .nearest = true},
+        {.name = "D, after SetSamplerLinear", .callback = platform.DrawCallback_SetSamplerLinear, .x = 192.0f, .y = 0.0f, .nearest = false},
+        {.name = "E, after SetSamplerNearest", .callback = platform.DrawCallback_SetSamplerNearest, .x = 64.0f, .y = 80.0f, .nearest = true},
+    };
+    for (uint32 frame = 0; frame < 2; ++frame)
+    {
+        new_frame();
+        ImDrawList* list = ImGui::GetForegroundDrawList();
+        for (const Image& image : images)
+        {
+            if (image.callback) list->AddCallback(image.callback, nullptr);
+            list->AddImage(user.GetTexRef(), ImVec2(image.x, image.y), ImVec2(image.x + 64.0f, image.y + 64.0f));
+        }
+        render_frame(fixture, target, frame == 1);
+    }
+    for (const Image& image : images)
+    {
+        const uint8* pixel = pixel_at(target, uint32(image.x) + 15, uint32(image.y) + 8);
+        const bool matches = image.nearest ? is_nearest(pixel) : is_linear(pixel);
+        if (!matches) fprintf(stderr, "%s reads %d %d %d\n", image.name, pixel[0], pixel[1], pixel[2]);
+        failures += check(matches, image.nearest ? "an image after SetSamplerNearest is sampled nearest" : "an image without nearest is sampled linear");
+    }
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    failures += check(platform.DrawCallback_SetSamplerLinear == nullptr && platform.DrawCallback_SetSamplerNearest == nullptr,
+                      "Shutdown clears both sampler callbacks");
+    ImGui::UnregisterUserTexture(&user);
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
 struct TestCase
 {
     const char* name;
@@ -528,6 +617,7 @@ const TestCase test_cases[] = {
     {.name = "scissor", .run = test_scissor},
     {.name = "srgb", .run = test_srgb},
     {.name = "scale", .run = test_scale},
+    {.name = "sampler", .run = test_sampler},
 };
 
 } // namespace

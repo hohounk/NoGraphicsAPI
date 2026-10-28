@@ -14,6 +14,7 @@ struct ImGuiNgaRoot
     ImGuiNgaVertex* vertices;
     uint32 texture;
     uint32 srgb;
+    uint32 sampler;
     float2 scale;
     float2 translate;
 };

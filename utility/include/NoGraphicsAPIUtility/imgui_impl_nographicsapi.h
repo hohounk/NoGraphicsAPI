@@ -28,8 +28,10 @@ IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_NewFrame();
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_UpdateTextures(ImDrawData* data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump);
 
 // Record inside a render pass on a color target of InitInfo::colorFormat, after UpdateTextures. One draw_indexed for each ImDrawCmd.
-// The bytes come from bump: TotalVtxCount * 20 bytes of vertices, TotalIdxCount * sizeof(ImDrawIdx) bytes of indices, and 32 bytes
-// for each root, each allocation rounded up to 16 bytes. A new root starts when the texture or the vertex pointer changes.
+// The bytes come from bump: TotalVtxCount * 20 bytes of vertices, TotalIdxCount * sizeof(ImDrawIdx) bytes of indices, and 40 bytes
+// for each root, each allocation rounded up to 16 bytes. A new root starts when the texture, the vertex pointer or the sampler changes.
+// The draws sample linear until a DrawCallback_SetSamplerNearest of the platform IO, and again after DrawCallback_SetSamplerLinear or
+// DrawCallback_ResetRenderState.
 // It sets the viewport to the framebuffer size, and leaves that viewport, the backend PSO, the backend texture and sampler
 // descriptor heaps and the last scissor bound.
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* data, gpu::CommandBuffer* commands, gpu::BumpAllocator& bump);
