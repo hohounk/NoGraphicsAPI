@@ -36,6 +36,7 @@ struct BackendData
     uint32 frames_in_flight = 0;
     uint32 srgb = 0;
     uint32 sampler = 0; // The sampler descriptor of the draws that follow: 0 linear, 1 nearest.
+    bool reset = false; // Set by reset_render_state. RenderDrawData rebinds the render state and clears it.
 };
 
 uint32 allocate_slot(const BackendData& data) noexcept
@@ -86,13 +87,14 @@ void upload_rect(gpu::CommandBuffer* commands, gpu::BumpAllocator& bump, gpu::Te
     });
 }
 
-// The value of ImGui::GetPlatformIO().DrawCallback_ResetRenderState. RenderDrawData compares against it and never calls it.
+// The value of ImGui::GetPlatformIO().DrawCallback_ResetRenderState. RenderDrawData calls it and reads the flag, not its address, because
+// identical code folding can give an empty user callback the address of an empty function.
 void reset_render_state(const ImDrawList*, const ImDrawCmd*) noexcept
 {
+    static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData)->reset = true;
 }
 
-// The values of DrawCallback_SetSamplerLinear and DrawCallback_SetSamplerNearest. RenderDrawData calls them. Their bodies differ, so that
-// identical code folding cannot give them the address of reset_render_state.
+// The values of DrawCallback_SetSamplerLinear and DrawCallback_SetSamplerNearest. RenderDrawData calls them.
 void set_sampler_linear(const ImDrawList*, const ImDrawCmd*) noexcept
 {
     static_cast<BackendData*>(ImGui::GetIO().BackendRendererUserData)->sampler = 0;
@@ -322,17 +324,14 @@ void ImGui_ImplNoGraphicsAPI_RenderDrawData(ImDrawData* draw_data, gpu::CommandB
         {
             if (command.UserCallback)
             {
-                if (command.UserCallback == reset_render_state)
+                command.UserCallback(list, &command);
+                if (data->reset)
                 {
                     bind_render_state(*data, commands, framebuffer_width, framebuffer_height);
                     data->sampler = 0;
+                    data->reset = false;
                 }
-                else if (command.UserCallback == set_sampler_linear || command.UserCallback == set_sampler_nearest) command.UserCallback(list, &command);
-                else
-                {
-                    command.UserCallback(list, &command);
-                    scissor = {.x = -1};
-                }
+                else if (command.UserCallback != set_sampler_linear && command.UserCallback != set_sampler_nearest) scissor = {.x = -1};
                 continue;
             }
             const float min_x = fmaxf((command.ClipRect.x - draw_data->DisplayPos.x) * draw_data->FramebufferScale.x, 0.0f);

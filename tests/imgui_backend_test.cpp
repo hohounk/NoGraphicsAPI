@@ -516,6 +516,43 @@ int test_scale(gpu::Device* device, const char*) noexcept
     return failures ? 1 : 0;
 }
 
+// Its body is empty, as is the body of a reset callback that identical code folding (lld --icf=all, MSVC /OPT:ICF) could merge with it.
+void empty_callback(const ImDrawList*, const ImDrawCmd*) noexcept
+{
+}
+
+// count_callback leaves a 1x1 viewport. An empty user callback must not reset it, so the first rect is not drawn. The reset callback
+// that follows restores the viewport, so the second rect is drawn.
+int test_empty_callback(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
+
+    uint32 callback_count = 0;
+    for (uint32 frame = 0; frame < 2; ++frame)
+    {
+        new_frame();
+        ImDrawList* list = ImGui::GetForegroundDrawList();
+        list->AddCallback(count_callback, &callback_count);
+        list->AddCallback(empty_callback, nullptr);
+        list->AddRectFilled(ImVec2(20.0f, 40.0f), ImVec2(50.0f, 70.0f), IM_COL32(255, 0, 255, 255));
+        list->AddCallback(ImGui::GetPlatformIO().DrawCallback_ResetRenderState, nullptr);
+        list->AddRectFilled(ImVec2(60.0f, 40.0f), ImVec2(90.0f, 70.0f), IM_COL32(255, 0, 255, 255));
+        render_frame(fixture, target, frame == 1);
+    }
+    // (200, 140) is covered by nothing, so it holds the clear color.
+    int failures = 0;
+    failures += check(!pixel_differs(target, 35, 55, 200, 140), "a rect after an empty user callback keeps the viewport of the callback before it");
+    failures += check(pixel_differs(target, 75, 55, 200, 140), "a rect after the reset callback is drawn");
+    failures += check(callback_count == 2, "RenderDrawData calls the counting callback once in each frame");
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
 // Under nearest sampling, each of the 64 pixels of a row of the image holds the color of its texel column: red, green, blue or white.
 bool row_is_nearest(const RenderTarget& target, uint32 x, uint32 y) noexcept
 {
@@ -873,6 +910,7 @@ const TestCase test_cases[] = {
     {.name = "scissor", .run = test_scissor},
     {.name = "srgb", .run = test_srgb},
     {.name = "scale", .run = test_scale},
+    {.name = "empty_callback", .run = test_empty_callback},
     {.name = "sampler", .run = test_sampler},
     {.name = "user_texture", .run = test_user_texture},
     {.name = "dense_update", .run = test_dense_update},

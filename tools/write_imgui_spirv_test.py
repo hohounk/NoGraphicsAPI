@@ -123,5 +123,18 @@ class CheckTest(unittest.TestCase):
             self.assertTrue(contains_run(command, flags["spirv-val"]), command)
 
 
+class FlagsFileTest(unittest.TestCase):
+    def test_no_tool_holds_a_copy_of_a_flag(self):
+        # The list names are dictionary keys, and the Metal runs of check_root_layouts.py pass -target with their own value.
+        flags = write_imgui_spirv.read_flags(write_imgui_spirv.FLAGS)
+        words = {word for values in flags.values() for word in values} - flags.keys() - {"-target"}
+        for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+            if path == Path(__file__).resolve():
+                continue
+            literals = set(re.findall(r"\"([^\"\n]*)\"|'([^'\n]*)'", path.read_text()))
+            copies = sorted(words & {literal for pair in literals for literal in pair})
+            self.assertEqual(copies, [], f"{path.name} holds flags of {write_imgui_spirv.FLAGS.name}")
+
+
 if __name__ == "__main__":
     unittest.main()
