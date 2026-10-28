@@ -64,7 +64,8 @@ To show your own image, put its pixels in an `ImTextureData` and register it wit
 
 To show a `gpu::Texture` that you create, for example a render target, call `ImGui_ImplNoGraphicsAPI_AddTexture`.
 It writes a sampled descriptor of the texture into a free slot and returns that slot. Draw it with `ImGui::Image(ImTextureRef(id), size)`.
-You keep the ownership. Create the texture with `TextureUsage::sampled`, and make it readable by the fragment stage before `RenderDrawData`.
+You keep the ownership. Create the texture with `TextureUsage::sampled`, in a color format that samples as float: not `_uint`, depth or stencil.
+Make it readable by the fragment stage before `RenderDrawData`.
 Call `ImGui_ImplNoGraphicsAPI_RemoveTexture` after no frame in flight uses the id, then destroy the texture.
 Shutdown frees the slots of added textures and destroys none of them.
 
@@ -93,8 +94,9 @@ the vertex shader converts the vertex colors to linear.
 The target converts them back when it writes, so the pixels have the ImGui color values.
 Other formats, float formats such as `rgba16_float` included, get the sRGB values unchanged.
 On a linear target, for example an `rgba16_float` swapchain in the extended sRGB linear color space, the colors thus show lighter than in ImGui.
-The conversion applies to vertex colors only. On an `_srgb` target, an `ImGui::Image` shows lighter than its texel bytes,
-because the backend samples textures as `rgba8_unorm`.
+The conversion applies to vertex colors only. On an `_srgb` target, an `ImGui::Image` of an ImGui texture shows lighter than its texel bytes,
+because the backend samples those textures as `rgba8_unorm`. A texture of `AddTexture` samples in its own format:
+an `_srgb` texture on an `_srgb` target shows its texel bytes, and on a linear target it shows darker.
 
 ## Shader
 

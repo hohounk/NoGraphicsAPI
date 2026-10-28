@@ -24,7 +24,8 @@ IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_Shutdown();
 IMGUI_IMPL_API void ImGui_ImplNoGraphicsAPI_NewFrame();
 
 // Registers a texture that you create and own, for ImGui::Image(ImTextureRef(id), ...), and returns its slot. Create it with
-// TextureUsage::sampled, and make it readable by the fragment stage before RenderDrawData. Its slot counts toward maxTextures.
+// TextureUsage::sampled, in a color format that samples as float (not _uint, depth or stencil). Make it readable by the fragment
+// stage before RenderDrawData. Its slot counts toward maxTextures.
 IMGUI_IMPL_API ImTextureID ImGui_ImplNoGraphicsAPI_AddTexture(gpu::Texture* texture);
 // Frees the slot of an AddTexture id. Call it only after no frame in flight uses the id. Shutdown frees every such slot and
 // destroys none of the textures: destroy each texture after RemoveTexture or Shutdown.
