@@ -309,6 +309,9 @@ For presentation, `acquire(commands)` returns a swapchain-owned `RenderView` and
 while the drawable extent is zero. Later command buffers in the same submission may also access the image.
 Submit through `submit_and_present(device, desc)`, which always uses queue zero and transitions the image
 back to presentation after all submitted command buffers.
+After a window resize on a surface with a fixed extent, call `get_drawable_extent()` before acquire. It marks the swapchain
+for recreation. On a surface without a fixed extent, such as Wayland, each acquire asks `DeviceDesc::drawable_extent` and
+recreates the swapchain when the extent changed.
 Windowed device creation/destruction, drawable queries, acquire, and presentation stay on the native
 message-pump thread; other work follows the threading rules above. Binary WSI semaphores remain private, while
 `VK_KHR_swapchain_maintenance1` present fences support safe reuse and swapchain replacement without
