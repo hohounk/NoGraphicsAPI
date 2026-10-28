@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 namespace
 {
@@ -263,8 +264,8 @@ bool begin_case(gpu::Device* device, Fixture& fixture, RenderTarget& target, gpu
 gpu::CommandBuffer* frame_commands = nullptr;
 
 // Ends the ImGui frame that new_frame began and draws it into the target, cleared to clear_color. The work is finished before it
-// returns. With read_back, target.readback holds the bytes of the target afterwards.
-void render_frame(Fixture& fixture, RenderTarget& target, bool read_back) noexcept
+// returns. With read_back, target.readback holds the bytes of the target afterwards. Returns the bytes that UpdateTextures took from bump.
+uint64 render_frame(Fixture& fixture, RenderTarget& target, bool read_back) noexcept
 {
     ImGui::Render();
     ImDrawData* draw_data = ImGui::GetDrawData();
@@ -273,6 +274,7 @@ void render_frame(Fixture& fixture, RenderTarget& target, bool read_back) noexce
     gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
     frame_commands = commands;
     ImGui_ImplNoGraphicsAPI_UpdateTextures(draw_data, commands, bump);
+    const uint64 update_bytes = uint64(bump.allocate(16).cpu - fixture.staging.range.cpu);
     const gpu::ColorAttachment color{.render_view = target.view, .load = gpu::LoadOp::clear, .clear = clear_color};
     gpu::begin_render_pass(commands, {.colors = {&color, 1}});
     ImGui_ImplNoGraphicsAPI_RenderDrawData(draw_data, commands, bump);
@@ -284,6 +286,7 @@ void render_frame(Fixture& fixture, RenderTarget& target, bool read_back) noexce
         gpu::barrier(commands, gpu::Stage::transfer, gpu::Access::transfer_write, gpu::Stage::host, gpu::Access::host_read);
     }
     submit_and_wait(fixture, commands);
+    return update_bytes;
 }
 
 const uint8* pixel_at(const RenderTarget& target, uint32 x, uint32 y) noexcept
@@ -513,6 +516,348 @@ int test_scale(gpu::Device* device, const char*) noexcept
     return failures ? 1 : 0;
 }
 
+// Under nearest sampling, each of the 64 pixels of a row of the image holds the color of its texel column: red, green, blue or white.
+bool row_is_nearest(const RenderTarget& target, uint32 x, uint32 y) noexcept
+{
+    for (uint32 offset = 0; offset < 64; ++offset)
+    {
+        const uint32 column = offset / 16;
+        const uint8* pixel = pixel_at(target, x + offset, y);
+        const int expected[3] = {column == 0 || column == 3 ? 255 : 0, column == 1 || column == 3 ? 255 : 0, column == 2 || column == 3 ? 255 : 0};
+        for (uint32 channel = 0; channel < 3; ++channel)
+            if (abs(int(pixel[channel]) - expected[channel]) > 5) return false;
+    }
+    return true;
+}
+
+// A red-green blend under linear sampling, about (135, 120, 0).
+bool is_linear(const uint8* pixel) noexcept
+{
+    return pixel[0] >= 64 && pixel[0] <= 192 && pixel[1] >= 64 && pixel[1] <= 192;
+}
+
+// Six 64x64 images of a 4x4 texture, so one texel spans 16 pixels. The callback before each image selects its sampler. Z comes first,
+// with no callback, and the frame before ends under nearest, so Z shows that each RenderDrawData starts linear.
+int test_sampler(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
+    const ImGuiPlatformIO& platform = ImGui::GetPlatformIO();
+    int failures = 0;
+    failures += check(platform.DrawCallback_SetSamplerLinear != nullptr, "Init sets DrawCallback_SetSamplerLinear");
+    failures += check(platform.DrawCallback_SetSamplerNearest != nullptr, "Init sets DrawCallback_SetSamplerNearest");
+    if (failures)
+    {
+        ImGui_ImplNoGraphicsAPI_Shutdown();
+        destroy_render_target(target);
+        destroy_fixture(fixture);
+        return 1;
+    }
+
+    // Four columns: red, green, blue and white.
+    ImTextureData user;
+    user.Create(ImTextureFormat_RGBA32, 4, 4);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+        {
+            uint8* pixel = static_cast<uint8*>(user.GetPixelsAt(x, y));
+            pixel[0] = x == 0 || x == 3 ? 255 : 0;
+            pixel[1] = x == 1 || x == 3 ? 255 : 0;
+            pixel[2] = x == 2 || x == 3 ? 255 : 0;
+            pixel[3] = 255;
+        }
+    ImGui::RegisterUserTexture(&user);
+
+    struct Image
+    {
+        const char* name;
+        ImDrawCallback callback;
+        float x;
+        float y;
+        bool nearest;
+    };
+    const Image images[] = {
+        {.name = "Z, first in the frame", .callback = nullptr, .x = 0.0f, .y = 80.0f, .nearest = false},
+        {.name = "A, after SetSamplerNearest", .callback = platform.DrawCallback_SetSamplerNearest, .x = 0.0f, .y = 0.0f, .nearest = true},
+        {.name = "B, after ResetRenderState", .callback = platform.DrawCallback_ResetRenderState, .x = 64.0f, .y = 0.0f, .nearest = false},
+        {.name = "C, after SetSamplerNearest", .callback = platform.DrawCallback_SetSamplerNearest, .x = 128.0f, .y = 0.0f, .nearest = true},
+        {.name = "D, after SetSamplerLinear", .callback = platform.DrawCallback_SetSamplerLinear, .x = 192.0f, .y = 0.0f, .nearest = false},
+        {.name = "E, after SetSamplerNearest", .callback = platform.DrawCallback_SetSamplerNearest, .x = 64.0f, .y = 80.0f, .nearest = true},
+    };
+    for (uint32 frame = 0; frame < 2; ++frame)
+    {
+        new_frame();
+        ImDrawList* list = ImGui::GetForegroundDrawList();
+        for (const Image& image : images)
+        {
+            if (image.callback) list->AddCallback(image.callback, nullptr);
+            list->AddImage(user.GetTexRef(), ImVec2(image.x, image.y), ImVec2(image.x + 64.0f, image.y + 64.0f));
+        }
+        render_frame(fixture, target, frame == 1);
+    }
+    for (const Image& image : images)
+    {
+        const uint8* pixel = pixel_at(target, uint32(image.x) + 15, uint32(image.y) + 8);
+        const bool matches = image.nearest ? row_is_nearest(target, uint32(image.x), uint32(image.y) + 8) : is_linear(pixel);
+        if (!matches) fprintf(stderr, "%s reads %d %d %d\n", image.name, pixel[0], pixel[1], pixel[2]);
+        failures += check(matches, image.nearest ? "an image after SetSamplerNearest is sampled nearest" : "an image without nearest is sampled linear");
+    }
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    failures += check(platform.DrawCallback_SetSamplerLinear == nullptr && platform.DrawCallback_SetSamplerNearest == nullptr,
+                      "Shutdown clears both sampler callbacks");
+    ImGui::UnregisterUserTexture(&user);
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
+// A 16x16 texture that the GPU clears to (0.25, 0.75, 0.5, 1), drawn through ImGui_ImplNoGraphicsAPI_AddTexture. After RemoveTexture,
+// a texture of ImGui takes the freed slot. A second AddTexture stays registered through Shutdown, and the case destroys the texture after
+// Shutdown, so a Shutdown that destroyed it would destroy it twice.
+int test_user_texture(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
+    int failures = 0;
+
+    const gpu::TextureDesc desc{
+        .extent = {.x = 16, .y = 16, .z = 1},
+        .format = gpu::Format::rgba8_unorm,
+        .usage = gpu::TextureUsage::sampled | gpu::TextureUsage::color_attachment,
+    };
+    const gpu::TextureHeap heap = gpu::create_texture_heap(device, gpu::get_texture_size_align(device, desc).size);
+    gpu::Texture* texture = heap.owner ? gpu::create_texture(device, desc, heap, 0) : nullptr;
+    gpu::RenderView* view = texture ? gpu::create_render_view(texture) : nullptr;
+    failures += check(view != nullptr, "the user texture is created");
+    if (view)
+    {
+        gpu::reset_command_pool(fixture.pool);
+        gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
+        gpu::initialize_texture(commands, texture);
+        const gpu::ColorAttachment color{.render_view = view, .load = gpu::LoadOp::clear, .clear = {.x = 0.25f, .y = 0.75f, .z = 0.5f, .w = 1.0f}};
+        gpu::begin_render_pass(commands, {.colors = {&color, 1}});
+        gpu::end_render_pass(commands);
+        gpu::barrier(commands, gpu::Stage::color_output, gpu::Access::color_write, gpu::Stage::fragment, gpu::Access::shader_read);
+        submit_and_wait(fixture, commands);
+
+        const ImTextureID id = ImGui_ImplNoGraphicsAPI_AddTexture(texture);
+        failures += check(id != ImTextureID_Invalid, "AddTexture returns a valid ImTextureID");
+        for (uint32 frame = 0; frame < 2; ++frame)
+        {
+            new_frame();
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::Begin("User texture", nullptr, fixed_window_flags | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground);
+            ImGui::Image(ImTextureRef(id), ImVec2(64.0f, 64.0f));
+            ImGui::End();
+            render_frame(fixture, target, frame == 1);
+        }
+        // The window padding puts the image at (8, 8)-(72, 72).
+        const uint8* pixel = pixel_at(target, 40, 40);
+        const int expected[4] = {64, 191, 128, 255};
+        bool matches = true;
+        for (uint32 channel = 0; channel < 4; ++channel) matches = matches && abs(int(pixel[channel]) - expected[channel]) <= 1;
+        if (!matches) fprintf(stderr, "the image reads %d %d %d %d\n", pixel[0], pixel[1], pixel[2], pixel[3]);
+        failures += check(matches, "ImGui::Image of an added texture shows its GPU-rendered color");
+
+        ImGui_ImplNoGraphicsAPI_RemoveTexture(id);
+        ImTextureData reused;
+        reused.Create(ImTextureFormat_RGBA32, 4, 4);
+        ImGui::RegisterUserTexture(&reused);
+        run_frame(fixture);
+        failures += check(reused.Status == ImTextureStatus_OK && reused.TexID == id, "a texture of ImGui reuses the slot that RemoveTexture freed");
+
+        const ImTextureID kept = ImGui_ImplNoGraphicsAPI_AddTexture(texture);
+        failures += check(kept != ImTextureID_Invalid && kept != id, "a second AddTexture takes a free slot");
+        ImGui_ImplNoGraphicsAPI_Shutdown();
+        ImGui::UnregisterUserTexture(&reused);
+    }
+    else
+    {
+        ImGui_ImplNoGraphicsAPI_Shutdown();
+    }
+    gpu::destroy_render_view(view);
+    gpu::destroy_texture(texture);
+    gpu::destroy_texture_heap(heap);
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
+// Wall-clock seconds. C has no portable monotonic clock before C23, so a clock step during a run skews that run.
+double seconds_now() noexcept
+{
+    timespec now{};
+    timespec_get(&now, TIME_UTC);
+    return double(now.tv_sec) + double(now.tv_nsec) * 1e-9;
+}
+
+// The wall time of UpdateTextures and RenderDrawData on a 1280x720 target, over 1000 frames after 10 warm-up frames. Each frame draws the
+// ImGui demo window, which has few draw commands with its sections closed, and a window of 64 child windows, each with its own draw list.
+// The case reports the times and fails only when a resource cannot be created.
+int test_record_time(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    const gpu::TextureDesc desc{.extent = {.x = 1280, .y = 720, .z = 1}, .format = gpu::Format::rgba8_unorm, .usage = gpu::TextureUsage::color_attachment};
+    const ImGui_ImplNoGraphicsAPI_InitInfo info{.device = device, .colorFormat = desc.format};
+    gpu::TextureHeap heap{};
+    gpu::Texture* texture = nullptr;
+    gpu::RenderView* view = nullptr;
+    if (create_fixture(fixture, device)) heap = gpu::create_texture_heap(device, gpu::get_texture_size_align(device, desc).size);
+    if (heap.owner) texture = gpu::create_texture(device, desc, heap, 0);
+    if (texture) view = gpu::create_render_view(texture);
+    const bool created = view && ImGui_ImplNoGraphicsAPI_Init(&info);
+    if (created)
+    {
+        gpu::reset_command_pool(fixture.pool);
+        gpu::CommandBuffer* commands = gpu::begin_commands(fixture.pool);
+        gpu::initialize_texture(commands, texture);
+        submit_and_wait(fixture, commands);
+
+        constexpr uint32 warm_up_frames = 10;
+        constexpr uint32 measured_frames = 1000;
+        ImGuiIO& io = ImGui::GetIO();
+        double update_seconds = 0.0;
+        double render_seconds = 0.0;
+        uint64 draw_commands = 0;
+        uint64 bump_bytes = 0;
+        for (uint32 frame = 0; frame < warm_up_frames + measured_frames; ++frame)
+        {
+            io.DisplaySize = ImVec2(1280.0f, 720.0f);
+            io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+            io.DeltaTime = 1.0f / 60.0f;
+            ImGui_ImplNoGraphicsAPI_NewFrame();
+            ImGui::NewFrame();
+            ImGui::ShowDemoWindow();
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(640.0f, 720.0f));
+            ImGui::Begin("Cells", nullptr, fixed_window_flags);
+            for (int index = 0; index < 64; ++index)
+            {
+                if (index % 8) ImGui::SameLine();
+                ImGui::PushID(index);
+                ImGui::BeginChild("Cell", ImVec2(72.0f, 80.0f), ImGuiChildFlags_Borders);
+                ImGui::Text("Cell %d", index);
+                ImGui::Button("Go");
+                ImGui::ProgressBar(float(index) / 64.0f, ImVec2(-1.0f, 0.0f));
+                ImGui::EndChild();
+                ImGui::PopID();
+            }
+            ImGui::End();
+            ImGui::Render();
+            ImDrawData* draw_data = ImGui::GetDrawData();
+            gpu::BumpAllocator bump(fixture.staging.range);
+            gpu::reset_command_pool(fixture.pool);
+            commands = gpu::begin_commands(fixture.pool);
+            const double update_start = seconds_now();
+            ImGui_ImplNoGraphicsAPI_UpdateTextures(draw_data, commands, bump);
+            const double update_end = seconds_now();
+            const gpu::ColorAttachment color{.render_view = view, .load = gpu::LoadOp::clear, .clear = clear_color};
+            gpu::begin_render_pass(commands, {.colors = {&color, 1}});
+            const double render_start = seconds_now();
+            ImGui_ImplNoGraphicsAPI_RenderDrawData(draw_data, commands, bump);
+            const double render_end = seconds_now();
+            gpu::end_render_pass(commands);
+            const gpu::GpuCpuRange<byte> probe = bump.allocate(16);
+            submit_and_wait(fixture, commands);
+            if (frame < warm_up_frames) continue;
+            update_seconds += update_end - update_start;
+            render_seconds += render_end - render_start;
+            for (const ImDrawList* list : draw_data->CmdLists) draw_commands += uint64(list->CmdBuffer.Size);
+            bump_bytes += uint64(probe.cpu - fixture.staging.range.cpu);
+        }
+        printf("record_time: UpdateTextures %.2f us, RenderDrawData %.2f us, %.1f draw commands, %.0f bump bytes per frame over %u frames\n",
+               update_seconds * 1e6 / measured_frames, render_seconds * 1e6 / measured_frames, double(draw_commands) / measured_frames,
+               double(bump_bytes) / measured_frames, measured_frames);
+        ImGui_ImplNoGraphicsAPI_Shutdown();
+    }
+    gpu::wait_idle(device);
+    gpu::destroy_render_view(view);
+    gpu::destroy_texture(texture);
+    gpu::destroy_texture_heap(heap);
+    destroy_fixture(fixture);
+    return check(created, "the fixture, the 1280x720 target and the backend are created");
+}
+
+// Paints the rects of texture with color and asks for their update, with UpdateRect as their bounding box.
+void request_painted_update(ImTextureData* texture, gpu::Span<const ImTextureRect> rects, const uint8 (&color)[3]) noexcept
+{
+    int min_x = texture->Width;
+    int min_y = texture->Height;
+    int max_x = 0;
+    int max_y = 0;
+    for (size_t index = 0; index < rects.size; ++index)
+    {
+        const ImTextureRect& rect = rects.data[index];
+        for (int y = rect.y; y < rect.y + rect.h; ++y)
+            for (int x = rect.x; x < rect.x + rect.w; ++x) memcpy(texture->GetPixelsAt(x, y), color, 3);
+        texture->Updates.push_back(rect);
+        min_x = rect.x < min_x ? rect.x : min_x;
+        min_y = rect.y < min_y ? rect.y : min_y;
+        max_x = rect.x + rect.w > max_x ? rect.x + rect.w : max_x;
+        max_y = rect.y + rect.h > max_y ? rect.y + rect.h : max_y;
+    }
+    texture->UpdateRect = {.x = uint16(min_x), .y = uint16(min_y), .w = uint16(max_x - min_x), .h = uint16(max_y - min_y)};
+    texture->SetStatus(ImTextureStatus_WantUpdates);
+}
+
+// A 64x64 texture drawn 1:1 at (0, 0). A dense update, four 3x3 rects that tile the 6x6 square at (8, 8), takes one upload of its
+// UpdateRect: 144 bytes, where four uploads of 36 bytes each round up to 4 * 48. A sparse update, two 3x3 rects at opposite corners,
+// keeps one upload per rect: 2 * 48 bytes, where its 64x64 UpdateRect would take 16384.
+int test_dense_update(gpu::Device* device, const char*) noexcept
+{
+    Fixture fixture{};
+    RenderTarget target{};
+    if (!begin_case(device, fixture, target, gpu::Format::rgba8_unorm)) return check(false, "the fixture, the render target and the backend are created");
+    int failures = 0;
+
+    ImTextureData user;
+    user.Create(ImTextureFormat_RGBA32, 64, 64);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x)
+        {
+            uint8* pixel = static_cast<uint8*>(user.GetPixelsAt(x, y));
+            pixel[0] = 0;
+            pixel[1] = 0;
+            pixel[2] = 0;
+            pixel[3] = 255;
+        }
+    ImGui::RegisterUserTexture(&user);
+
+    const uint8 yellow[3] = {255, 255, 0};
+    const uint8 cyan[3] = {0, 255, 255};
+    uint64 update_bytes[3] = {};
+    // ImGui::NewFrame clears the Updates of a texture in ImTextureStatus_OK, so each request follows new_frame.
+    for (uint32 frame = 0; frame < 3; ++frame)
+    {
+        new_frame();
+        if (frame == 1)
+            request_painted_update(&user, {{.x = 8, .y = 8, .w = 3, .h = 3}, {.x = 11, .y = 8, .w = 3, .h = 3}, {.x = 8, .y = 11, .w = 3, .h = 3},
+                                           {.x = 11, .y = 11, .w = 3, .h = 3}}, yellow);
+        if (frame == 2) request_painted_update(&user, {{.x = 0, .y = 0, .w = 3, .h = 3}, {.x = 61, .y = 61, .w = 3, .h = 3}}, cyan);
+        ImGui::GetForegroundDrawList()->AddImage(user.GetTexRef(), ImVec2(0.0f, 0.0f), ImVec2(64.0f, 64.0f));
+        update_bytes[frame] = render_frame(fixture, target, frame == 2);
+    }
+    if (update_bytes[1] != 144 || update_bytes[2] != 96) fprintf(stderr, "the updates take %llu and %llu bytes\n", (unsigned long long)update_bytes[1],
+                                                                 (unsigned long long)update_bytes[2]);
+    failures += check(update_bytes[1] == 144, "a dense update takes one upload of its UpdateRect");
+    failures += check(update_bytes[2] == 96, "a sparse update takes one upload per rect");
+    const uint8* dense = pixel_at(target, 12, 12);
+    const uint8* sparse = pixel_at(target, 62, 62);
+    const uint8* untouched = pixel_at(target, 30, 30);
+    failures += check(dense[0] == 255 && dense[1] == 255 && dense[2] == 0, "the dense update reaches the texture");
+    failures += check(sparse[0] == 0 && sparse[1] == 255 && sparse[2] == 255, "the sparse update reaches the texture");
+    failures += check(untouched[0] == 0 && untouched[1] == 0 && untouched[2] == 0, "texels outside the updates keep their color");
+
+    ImGui_ImplNoGraphicsAPI_Shutdown();
+    ImGui::UnregisterUserTexture(&user);
+    destroy_render_target(target);
+    destroy_fixture(fixture);
+    return failures ? 1 : 0;
+}
+
 struct TestCase
 {
     const char* name;
@@ -528,6 +873,10 @@ const TestCase test_cases[] = {
     {.name = "scissor", .run = test_scissor},
     {.name = "srgb", .run = test_srgb},
     {.name = "scale", .run = test_scale},
+    {.name = "sampler", .run = test_sampler},
+    {.name = "user_texture", .run = test_user_texture},
+    {.name = "dense_update", .run = test_dense_update},
+    {.name = "record_time", .run = test_record_time},
 };
 
 } // namespace
