@@ -473,8 +473,8 @@ struct DeviceDesc
     uint32 desired_copy_queue_count = 0;
     uint32 timestamp_query_count = 256; // Per command buffer; zero disables timestamps.
     // Linux WSI: a non-null create_surface replaces window. The device enables instance_extensions once each, also the names
-    // it enables on its own, owns the returned surface, and asks drawable_extent when the surface has no fixed extent.
-    // Null callbacks keep the Win32 path.
+    // it enables on its own, and owns the returned surface. When the surface has no fixed extent, as on Wayland, each acquire
+    // asks drawable_extent and recreates the swapchain when the extent changed. Null callbacks keep the Win32 path.
     const char* const* instance_extensions = nullptr;
     uint32 instance_extension_count = 0;
     VkSurfaceKHR_T* (*create_surface)(VkInstance_T* instance, void* user) = nullptr;
@@ -709,6 +709,7 @@ constexpr RenderingFlags operator|(RenderingFlags lhs, RenderingFlags rhs) noexc
 void destroy_device(Device* device) noexcept;
 [[nodiscard]] const DeviceCaps& get_device_caps(const Device* device) noexcept;
 [[nodiscard]] bool supports_texture_format(const Device* device, Format format, TextureUsage usage) noexcept;
+// Vulkan: on a surface with a fixed extent, call it after a window resize. It marks the swapchain for recreation.
 [[nodiscard]] uint32x2 get_drawable_extent(Device* device) noexcept;
 // Call after wait_idle, outside an acquired frame. Unsupported pairs leave the current mode unchanged.
 // A zero-size drawable defers swapchain recreation until acquire sees a nonzero extent.

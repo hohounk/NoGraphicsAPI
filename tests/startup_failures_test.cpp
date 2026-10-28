@@ -8,6 +8,9 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <windows.h>
 #endif
+#if defined(NOGRAPHICSAPI_TEST_WAYLAND)
+#include <wayland-client.h>
+#endif
 #include <vulkan/vulkan.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -527,15 +530,23 @@ void pipeline_failures(gpu::Device* device) noexcept
 }
 
 const char* const headless_extensions[]{VK_KHR_SURFACE_EXTENSION_NAME, VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME};
+#if defined(NOGRAPHICSAPI_TEST_WAYLAND)
+const char* const wayland_extensions[]{VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME};
+#endif
 #if defined(NOGRAPHICSAPI_TEST_XCB)
 const char* const xcb_extensions[]{VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_XCB_SURFACE_EXTENSION_NAME};
 #endif
 
-// A headless surface has no fixed extent and asks drawable_extent. An X11 window has a fixed extent.
+// Headless and Wayland surfaces have no fixed extent and ask drawable_extent. An X11 window has a fixed extent.
 struct TestWindow
 {
     gpu::uint32x2 extent;
     uint32 surface_calls, extent_calls;
+#if defined(NOGRAPHICSAPI_TEST_WAYLAND)
+    wl_display* display;
+    wl_compositor* compositor;
+    wl_surface* surface;
+#endif
 #if defined(NOGRAPHICSAPI_TEST_XCB)
     xcb_connection_t* connection;
     xcb_window_t window;
@@ -558,6 +569,30 @@ VkSurfaceKHR_T* create_headless_surface(VkInstance_T* instance, void* user) noex
     ++static_cast<TestWindow*>(user)->surface_calls;
     return create && create(instance, &info, nullptr, &surface) == VK_SUCCESS ? surface : VK_NULL_HANDLE;
 }
+
+#if defined(NOGRAPHICSAPI_TEST_WAYLAND)
+void bind_compositor(void* user, wl_registry* registry, uint32 name, const char* interface, uint32) noexcept
+{
+    if (!strcmp(interface, wl_compositor_interface.name))
+        static_cast<TestWindow*>(user)->compositor = static_cast<wl_compositor*>(wl_registry_bind(registry, name, &wl_compositor_interface, 1));
+}
+
+void remove_global(void*, wl_registry*, uint32) noexcept
+{
+}
+
+const wl_registry_listener registry_listener{.global = bind_compositor, .global_remove = remove_global};
+
+VkSurfaceKHR_T* create_wayland_surface(VkInstance_T* instance, void* user) noexcept
+{
+    TestWindow& window = *static_cast<TestWindow*>(user);
+    const PFN_vkCreateWaylandSurfaceKHR create = gpu::load_instance_proc<PFN_vkCreateWaylandSurfaceKHR>(instance, "vkCreateWaylandSurfaceKHR");
+    const VkWaylandSurfaceCreateInfoKHR info{.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR, .display = window.display, .surface = window.surface};
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    ++window.surface_calls;
+    return create && create(instance, &info, nullptr, &surface) == VK_SUCCESS ? surface : VK_NULL_HANDLE;
+}
+#endif
 
 #if defined(NOGRAPHICSAPI_TEST_XCB)
 VkSurfaceKHR_T* create_xcb_surface(VkInstance_T* instance, void* user) noexcept
@@ -635,8 +670,10 @@ int present_frames(const char* const* extensions, VkSurfaceKHR_T* (*create_surfa
     gpu::CommandPool* pool = gpu::create_command_pool(device);
     gpu::TimelineSemaphore* timeline = gpu::create_timeline_semaphore(device);
     check(pool && timeline, "presentation fixture is available");
-    for (uint64 frame = 1; pool && timeline && frame <= 3; ++frame)
+    for (uint64 frame = 1; pool && timeline && frame <= 4; ++frame)
     {
+        // A surface without a fixed extent reports no resize, so acquire alone must follow drawable_extent.
+        if (frame == 3 && !fixed_extent) window.extent = {.x = 80, .y = 56};
         gpu::reset_command_pool(pool);
         gpu::CommandBuffer* commands = gpu::begin_commands(pool);
         const gpu::SwapchainFrame acquired = gpu::acquire(commands);
@@ -668,10 +705,33 @@ int present_case() noexcept
     int result = 77;
     if (instance_extension_available(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME))
         result = present_frames(headless_extensions, create_headless_surface, window, false);
+#if defined(NOGRAPHICSAPI_TEST_WAYLAND)
+    if (result == 77 && instance_extension_available(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME))
+    {
+        window.display = wl_display_connect(nullptr);
+        if (window.display)
+        {
+            printf("Headless presentation is unavailable; trying a Wayland surface.\n");
+            surface = "Wayland";
+            wl_registry* registry = wl_display_get_registry(window.display);
+            wl_registry_add_listener(registry, &registry_listener, &window);
+            wl_display_roundtrip(window.display);
+            if (window.compositor)
+            {
+                window.surface = wl_compositor_create_surface(window.compositor);
+                result = present_frames(wayland_extensions, create_wayland_surface, window, false);
+                wl_surface_destroy(window.surface);
+                wl_compositor_destroy(window.compositor);
+            }
+            wl_registry_destroy(registry);
+            wl_display_disconnect(window.display);
+        }
+    }
+#endif
 #if defined(NOGRAPHICSAPI_TEST_XCB)
     if (result == 77 && instance_extension_available(VK_KHR_XCB_SURFACE_EXTENSION_NAME))
     {
-        printf("Headless presentation is unavailable; trying an X11 window.\n");
+        printf("No headless or Wayland presentation; trying an X11 window.\n");
         surface = "X11";
         window.connection = xcb_connect(nullptr, nullptr);
         if (!xcb_connection_has_error(window.connection))
@@ -691,7 +751,7 @@ int present_case() noexcept
     unchanged({});
     if (result == 77)
     {
-        printf("SKIP: no GPU presents to a headless or X11 surface.\n");
+        printf("SKIP: no GPU presents to a headless, Wayland or X11 surface.\n");
         return 77;
     }
     printf("Linux presentation, %s surface: %u failures\n", surface, failures);
