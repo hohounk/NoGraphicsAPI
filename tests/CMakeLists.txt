@@ -307,6 +307,14 @@ target_compile_definitions(test_shader_abi PRIVATE NOGRAPHICSAPI_SHADER_ABI_PATH
 add_test(NAME test_shader_abi COMMAND test_shader_abi)
 set_tests_properties(test_shader_abi PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME test_root_layouts
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/check_root_layouts.py --skip-metal
+        ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/utility/src ${PROJECT_SOURCE_DIR}/examples
+        --include ${PROJECT_SOURCE_DIR}/include --include ${PROJECT_SOURCE_DIR}/utility/include
+        --slang ${NOGRAPHICSAPI_SLANGC} --output ${CMAKE_CURRENT_BINARY_DIR}/root-layouts)
+set_tests_properties(test_root_layouts PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
 if(NOT APPLE)
     # Compile Vulkan buffer commands separately so production selection prefers native address commands.
     add_library(NoGraphicsAPI_buffer_commands STATIC ${PROJECT_SOURCE_DIR}/${NoGraphicsAPI_backend_source})
@@ -379,7 +387,6 @@ if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND)
             SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
     endforeach()
 
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME test_imgui_spirv_embedded
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/write_imgui_spirv.py --check
             --slangc ${NOGRAPHICSAPI_SLANGC} --spirv-val ${NOGRAPHICSAPI_SPIRV_VAL})

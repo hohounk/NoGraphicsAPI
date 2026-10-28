@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check every GPU_ROOT field against C++, Slang SPIR-V reflection and native Metal layout (macOS)."""
+"""Check every GPU_ROOT field against C++, Slang SPIR-V reflection and native Metal layout (macOS); --skip-metal checks C++ and SPIR-V only."""
 
 import argparse
 import concurrent.futures
@@ -52,8 +52,12 @@ def main():
     parser.add_argument("--slang", required=True, type=Path)
     parser.add_argument("--cxx", default="clang++")
     parser.add_argument("--output", required=True, type=Path, help="Scratch directory for probes and layout report")
+    parser.add_argument("--skip-metal", action="store_true", help="Check C++ and SPIR-V only; skip the Metal output and xcrun")
     parser.add_argument("--jobs", default=8, type=int)
     args = parser.parse_args()
+    if not args.slang.exists():
+        print(f"slangc not found: {args.slang}")
+        sys.exit(77)
     args.output.mkdir(parents=True, exist_ok=True)
     roots = set()
     declarations = {}
@@ -121,6 +125,8 @@ def main():
                     check_spirv(child, member + ".", expected[0])
 
         check_spirv(reflected)
+        if args.skip_metal:
+            return root
         metal = probe.with_suffix(".metal")
         run(common + ["-target", "metal", "-DNOGRAPHICSAPI_METAL", "-o", metal])
         text = metal.read_text()
@@ -156,7 +162,7 @@ def main():
         for root in executor.map(check, roots):
             print(f"Checked {root}: {len(paths[root])} fields/array strides", flush=True)
     (args.output / "layouts.json").write_text(json.dumps(layouts, indent=2) + "\n")
-    print(f"Validated {len(roots)} roots and {sum(map(len, paths.values()))} fields/array strides against C++, SPIR-V and Metal.")
+    print(f"Validated {len(roots)} roots and {sum(map(len, paths.values()))} fields/array strides against C++, SPIR-V" + ("." if args.skip_metal else " and Metal."))
 
 
 if __name__ == "__main__":
