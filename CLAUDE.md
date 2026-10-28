@@ -29,6 +29,7 @@ result. Between syncs, a topic gains new commits only.
 | `calibrated-timestamps` | `calibrate_timestamps`: paired GPU ticks and CPU nanoseconds through `VK_KHR_calibrated_timestamps` and Metal `sampleTimestamps` (nga-col.7) | Replay its commits onto `main`. |
 | `imgui-backend` | Dear ImGui renderer backend `NoGraphicsAPI::ImGuiBackend` behind `NOGRAPHICSAPI_BUILD_IMGUI_BACKEND`, Vulkan only (nga-col.16) | Replay its commits onto `main`. |
 | `presentation-imgui` | The SDL3 ImGui example, which needs both `linux-wsi` and `imgui-backend` (nga-col.16) | Recreate by merging those two replayed topics, then replay its own commits. |
+| `plans` | Orphan branch with the specs and plans of the fork topics, in the worktree `.worktrees/plans` (nga-col.23) | Does not move. Not a queue entry. Never merges into a topic or `integration`. |
 | `integration` | **Every consumer pins a commit SHA of this branch** | Rebuild from the new `main` by `--no-ff` merges of the queue, plus `CLAUDE.md` commits. The previous tip is tagged before the branch moves. |
 
 ## Rules
@@ -63,6 +64,14 @@ result. Between syncs, a topic gains new commits only.
 - A new topic starts from `main`, gets its own branch, and joins the queue.
   A topic that fixes code that only another topic holds starts from that
   topic, as `pr/16-fixes` does.
+- Write a spec or plan for a topic on the branch `plans`, in
+  `.worktrees/plans`, not in the untracked `prompts/`. Commit each change,
+  each task-specifier rewrite too, so that the plan keeps its history.
+- Before you read code for a plan, create the worktree of the topic from
+  its base branch. Read every anchor of the plan in that worktree: a
+  function, a field, a test target. This checkout is on `integration`,
+  which also holds the code of every other topic, so an anchor that you read
+  here can be absent from the topic (nga-col.15).
 - A consumer that needs a change starts an agent-deck session here:
   `agent-deck launch ~/katsepolygon/forks/NoGraphicsAPI -t "<title>" -c claude --message "<the change>"`.
   The consumer then moves its pin to the new `integration` SHA.
