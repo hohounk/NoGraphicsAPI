@@ -384,4 +384,6 @@ if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND)
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/write_imgui_spirv.py --check
             --slangc ${NOGRAPHICSAPI_SLANGC} --spirv-val ${NOGRAPHICSAPI_SPIRV_VAL})
     set_tests_properties(test_imgui_spirv_embedded PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME test_imgui_spirv_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/write_imgui_spirv_test.py)
+    set_tests_properties(test_imgui_spirv_check PROPERTIES TIMEOUT 60)
 endif()

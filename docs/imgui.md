@@ -104,5 +104,9 @@ The shader is [`imgui_impl_nographicsapi.slang`](../utility/src/imgui_impl_nogra
 `utility/src/imgui_impl_nographicsapi_spirv.h` embeds its SPIR-V, so a build needs no shader tools.
 After you change the shader, run [`tools/write_imgui_spirv.py`](../tools/write_imgui_spirv.py) to write the header again.
 It uses `slangc` and `spirv-val` from `PATH`, or the paths of `--slangc` and `--spirv-val`.
+It takes the flags from [`examples/NoGraphicsAPI_slang_flags.txt`](../examples/NoGraphicsAPI_slang_flags.txt),
+the same file that `NoGraphicsAPI_compile_slang` reads, so the backend shader and the example shaders compile with the same flags.
 The test `test_imgui_spirv_embedded` runs the script with `--check`. The test fails when the header differs from a fresh compile.
 It skips when `slangc` is not the version that the header records.
+The test `test_imgui_spirv_check` needs no compiler. It replaces `slangc` and `spirv-val` with a fake and checks the `--check` results,
+the SPIR-V magic check and the flags of each command.

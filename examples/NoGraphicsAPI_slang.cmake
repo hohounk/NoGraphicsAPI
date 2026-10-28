@@ -46,6 +46,21 @@ if(NOT APPLE)
         "SPIRV-Tools v([0-9]+\\.[0-9]+)")
 endif()
 
+# One home for the Slang flags, shared with tools/write_imgui_spirv.py.
+set(NOGRAPHICSAPI_SLANG_FLAGS_FILE ${CMAKE_CURRENT_LIST_DIR}/NoGraphicsAPI_slang_flags.txt)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${NOGRAPHICSAPI_SLANG_FLAGS_FILE})
+file(STRINGS ${NOGRAPHICSAPI_SLANG_FLAGS_FILE} flag_lines REGEX "^[a-z-]+ ")
+foreach(flag_line IN LISTS flag_lines)
+    string(REGEX MATCH "^([a-z-]+) (.*)$" flag_match "${flag_line}")
+    string(REPLACE "-" "_" flag_name "${CMAKE_MATCH_1}")
+    separate_arguments(NOGRAPHICSAPI_SLANG_FLAGS_${flag_name} UNIX_COMMAND "${CMAKE_MATCH_2}")
+endforeach()
+foreach(flag_name IN ITEMS common spirv spirv_val)
+    if(NOT NOGRAPHICSAPI_SLANG_FLAGS_${flag_name})
+        message(FATAL_ERROR "${NOGRAPHICSAPI_SLANG_FLAGS_FILE} has no flag list '${flag_name}'")
+    endif()
+endforeach()
+
 function(NoGraphicsAPI_compile_slang output source entry stage)
     cmake_parse_arguments(SLANG "" "" "DEPENDS;DEFINES;OPTIONS" ${ARGN})
     get_filename_component(output_dir "${output}" DIRECTORY)
@@ -55,7 +70,7 @@ function(NoGraphicsAPI_compile_slang output source entry stage)
         ${PROJECT_SOURCE_DIR}/utility/include/NoGraphicsAPIUtility/shader_types.h)
     set(common_options
         -entry ${entry} -stage ${stage}
-        -fvk-use-c-layout -matrix-layout-row-major
+        ${NOGRAPHICSAPI_SLANG_FLAGS_common}
         -I ${CMAKE_CURRENT_SOURCE_DIR}
         -I ${PROJECT_SOURCE_DIR}/include
         -I ${PROJECT_SOURCE_DIR}/utility/include)
@@ -78,16 +93,15 @@ function(NoGraphicsAPI_compile_slang output source entry stage)
             COMMENT "Compiling Slang ${stage} shader ${entry} to metallib"
         )
     else()
-        set(options -capability spvDescriptorHeapEXT)
+        set(options)
         if(stage STREQUAL "mesh" OR stage STREQUAL "amplification")
             list(APPEND options -capability spvMeshShadingEXT)
         endif()
         add_custom_command(
             OUTPUT ${output}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${output_dir}
-            COMMAND ${NOGRAPHICSAPI_SLANGC} ${source} -target spirv -profile spirv_1_5
-                -emit-spirv-directly -fvk-use-entrypoint-name ${common_options} ${options} -o ${output}
-            COMMAND ${NOGRAPHICSAPI_SPIRV_VAL} --target-env vulkan1.4 --scalar-block-layout ${output}
+            COMMAND ${NOGRAPHICSAPI_SLANGC} ${source} ${NOGRAPHICSAPI_SLANG_FLAGS_spirv} ${common_options} ${options} -o ${output}
+            COMMAND ${NOGRAPHICSAPI_SPIRV_VAL} ${NOGRAPHICSAPI_SLANG_FLAGS_spirv_val} ${output}
             DEPENDS ${dependencies}
             VERBATIM
             COMMENT "Compiling and validating Slang ${stage} shader ${entry} to SPIR-V"
