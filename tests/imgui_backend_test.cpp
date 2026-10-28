@@ -513,10 +513,18 @@ int test_scale(gpu::Device* device, const char*) noexcept
     return failures ? 1 : 0;
 }
 
-// Red under nearest sampling: the last pixel of the red texel column.
-bool is_nearest(const uint8* pixel) noexcept
+// Under nearest sampling, each of the 64 pixels of a row of the image holds the color of its texel column: red, green, blue or white.
+bool row_is_nearest(const RenderTarget& target, uint32 x, uint32 y) noexcept
 {
-    return pixel[0] >= 250 && pixel[1] <= 5;
+    for (uint32 offset = 0; offset < 64; ++offset)
+    {
+        const uint32 column = offset / 16;
+        const uint8* pixel = pixel_at(target, x + offset, y);
+        const int expected[3] = {column == 0 || column == 3 ? 255 : 0, column == 1 || column == 3 ? 255 : 0, column == 2 || column == 3 ? 255 : 0};
+        for (uint32 channel = 0; channel < 3; ++channel)
+            if (abs(int(pixel[channel]) - expected[channel]) > 5) return false;
+    }
+    return true;
 }
 
 // A red-green blend under linear sampling, about (135, 120, 0).
@@ -588,7 +596,7 @@ int test_sampler(gpu::Device* device, const char*) noexcept
     for (const Image& image : images)
     {
         const uint8* pixel = pixel_at(target, uint32(image.x) + 15, uint32(image.y) + 8);
-        const bool matches = image.nearest ? is_nearest(pixel) : is_linear(pixel);
+        const bool matches = image.nearest ? row_is_nearest(target, uint32(image.x), uint32(image.y) + 8) : is_linear(pixel);
         if (!matches) fprintf(stderr, "%s reads %d %d %d\n", image.name, pixel[0], pixel[1], pixel[2]);
         failures += check(matches, image.nearest ? "an image after SetSamplerNearest is sampled nearest" : "an image without nearest is sampled linear");
     }
