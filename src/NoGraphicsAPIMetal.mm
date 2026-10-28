@@ -670,8 +670,9 @@ bool supports_texture_format(const Device* device, Format format, TextureUsage u
     if (bc && !device->caps.texture_compression_bc) return false;
     if (has_usage(usage, TextureUsage::storage))
     {
-        if (compressed || info.depth || info.stencil || info.srgb || format == Format::rgba4_unorm || format == Format::r5g5b5a1_unorm ||
-            format == Format::r5g6b5_unorm) return false;
+        if (compressed || info.depth || info.stencil || format == Format::r8_srgb || format == Format::rg8_srgb ||
+            format == Format::rgba8_srgb || format == Format::bgra8_srgb || format == Format::rgba4_unorm ||
+            format == Format::r5g5b5a1_unorm || format == Format::r5g6b5_unorm) return false;
     }
     if (has_usage(usage, TextureUsage::color_attachment) && (compressed || info.depth || info.stencil)) return false;
     if (has_usage(usage, TextureUsage::depth_stencil_attachment) && !(info.depth || info.stencil)) return false;
