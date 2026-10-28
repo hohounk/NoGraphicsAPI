@@ -27,6 +27,8 @@ result. Between syncs, a topic gains new commits only.
 | `debug-utils` | Object names and command labels through `VK_EXT_debug_utils`, in every build (nga-col.6, nga-col.8) | Replay its commits onto `main`. |
 | `surface-formats` | One query of the surface formats, so a short driver list does not fail the swapchain setup (nga-col.5) | Replay its commits onto `main`. |
 | `calibrated-timestamps` | `calibrate_timestamps`: paired GPU ticks and CPU nanoseconds through `VK_KHR_calibrated_timestamps` and Metal `sampleTimestamps` (nga-col.7) | Replay its commits onto `main`. |
+| `imgui-backend` | Dear ImGui renderer backend `NoGraphicsAPI::ImGuiBackend` behind `NOGRAPHICSAPI_BUILD_IMGUI_BACKEND`, Vulkan only (nga-col.16) | Replay its commits onto `main`. |
+| `presentation-imgui` | The SDL3 ImGui example, which needs both `linux-wsi` and `imgui-backend` (nga-col.16) | Recreate by merging those two replayed topics, then replay its own commits. |
 | `integration` | **Every consumer pins a commit SHA of this branch** | Rebuild from the new `main` by `--no-ff` merges of the queue, plus `CLAUDE.md` commits. The previous tip is tagged before the branch moves. |
 
 ## Rules
@@ -82,13 +84,13 @@ this checkout:
 ```bash
 B=$(mktemp -d /tmp/nga-gate.XXXX)
 F=(-G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ "-DCMAKE_EXE_LINKER_FLAGS=-stdlib=libc++ -lc++abi")
-cmake -S . -B "$B/suite" "${F[@]}" -DNOGRAPHICSAPI_BUILD_TESTS=ON -DNOGRAPHICSAPI_BUILD_EXAMPLES=OFF > "$B/suite.cfg" 2>&1 \
+cmake -S . -B "$B/suite" "${F[@]}" -DNOGRAPHICSAPI_BUILD_TESTS=ON -DNOGRAPHICSAPI_BUILD_EXAMPLES=OFF -DNOGRAPHICSAPI_BUILD_IMGUI_BACKEND=ON > "$B/suite.cfg" 2>&1 \
   && cmake --build "$B/suite" > "$B/suite.build" 2>&1 \
   && timeout -k 5 540 ctest --test-dir "$B/suite" --timeout 120 > "$B/suite.ctest" 2>&1; echo "suite=$?"
 cmake -S . -B "$B/rel" "${F[@]}" -DCMAKE_BUILD_TYPE=Release -DNOGRAPHICSAPI_BUILD_TESTS=ON -DNOGRAPHICSAPI_BUILD_EXAMPLES=OFF > "$B/rel.cfg" 2>&1 \
   && cmake --build "$B/rel" --target test_startup_failures test_debug_utils > "$B/rel.build" 2>&1 \
   && timeout -k 5 300 ctest --test-dir "$B/rel" -R '^test_(startup_failures|debug_utils)' --timeout 120 > "$B/rel.ctest" 2>&1; echo "release=$?"
-cmake -S . -B "$B/ex" "${F[@]}" -DNOGRAPHICSAPI_BUILD_TESTS=OFF -DNOGRAPHICSAPI_BUILD_EXAMPLES=ON > "$B/ex.cfg" 2>&1
+cmake -S . -B "$B/ex" "${F[@]}" -DNOGRAPHICSAPI_BUILD_TESTS=OFF -DNOGRAPHICSAPI_BUILD_EXAMPLES=ON -DNOGRAPHICSAPI_BUILD_IMGUI_BACKEND=ON > "$B/ex.cfg" 2>&1
 cmake --build "$B/ex" -- -k 0 > "$B/ex.build" 2>&1; grep '^FAILED:' "$B/ex.build"
 grep -E 'tests passed|Failed|\*\*\*' "$B/suite.ctest" "$B/rel.ctest"
 tmp-rm "$B"
@@ -100,6 +102,10 @@ platform except Apple, so on Linux only that file fails, and every other
 example source still compiles. Any other `FAILED:` line fails the gate. On
 Linux a missing `FAILED:` line also fails the gate: it means that the
 examples step did not build at all.
+
+The suite and the examples configure fetch imgui from GitHub. For an offline Gate, add
+`-DFETCHCONTENT_SOURCE_DIR_IMGUI=<a v1.93.0-docking checkout>` to `F`. The examples build
+needs SDL3 with its CMake config package for `example_imgui`.
 
 The Release run exists because `assert_vk` is a no-op under `NDEBUG`, and the
 first build has no `CMAKE_BUILD_TYPE`. `test_debug_utils` runs there too,
@@ -128,8 +134,8 @@ it here.
 2. Tag the current `integration` tip as `pins/integration-<sha>` before the
    branch moves. The tag is what keeps already-published pins fetchable.
 3. Replay the queue onto the new `main`, in this order: `device-lost`,
-   `linux-wsi`, `pr/16-fixes`, `clang-warnings`, `debug-utils`, `surface-formats`, `calibrated-timestamps`, then recreate
-   `presentation-device-lost` and `presentation-pr/16`. Replay code commits. Drop a commit whose tree change
+   `linux-wsi`, `pr/16-fixes`, `clang-warnings`, `debug-utils`, `surface-formats`, `calibrated-timestamps`, `imgui-backend`, then recreate
+   `presentation-device-lost`, `presentation-pr/16` and `presentation-imgui`. Replay code commits. Drop a commit whose tree change
    cancels out, such as a `CLAUDE.md` edit on a topic that does not carry
    that file. Resolve conflicts by the adaptation rule above. Record each
    resolution and its reason in the commit or merge message.
