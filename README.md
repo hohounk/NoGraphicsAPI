@@ -9,7 +9,8 @@ The goal is to make GPU programming feel more like working with ordinary memory 
 GPU pointers for data, heap indices for textures, and one GPU pointer to the arguments of each draw or dispatch.
 
 Metal and Vulkan are supported native backends. CMake selects Metal on macOS/iOS and Vulkan on Windows/Linux.
-Both use the same C++ API and Slang sources. Windows and macOS include windowed examples; Linux currently supports headless use.
+Both use the same C++ API and Slang sources. Windows and macOS include windowed examples. On Linux, an app presents through Wayland or X11
+when it supplies the `DeviceDesc::create_surface` and `drawable_extent` callbacks. See [Linux presentation](docs/vulkan-support.md#linux-presentation).
 
 ## What changes from classic rendering?
 

@@ -823,15 +823,20 @@ bool present_frames(const char* name, const char* const* extensions, VkSurfaceKH
     gpu::CommandPool* pool = gpu::create_command_pool(device);
     gpu::TimelineSemaphore* timeline = gpu::create_timeline_semaphore(device);
     check(pool && timeline, "presentation fixture is available");
-    for (uint64 frame = 1; pool && timeline && frame <= 4; ++frame)
+    for (uint64 frame = 1; pool && timeline && frame <= 5; ++frame)
     {
-        // A surface without a fixed extent reports no resize, so acquire alone must follow drawable_extent.
+        // A surface without a fixed extent reports no resize, so acquire alone must follow drawable_extent, also to and from 0x0.
         if (frame == 3 && !fixed_extent) window.extent = {.x = 80, .y = 56};
+        if (frame == 4 && !fixed_extent) window.extent = {};
+        if (frame == 5 && !fixed_extent) window.extent = {.x = 80, .y = 56};
         gpu::reset_command_pool(pool);
         gpu::CommandBuffer* commands = gpu::begin_commands(pool);
         const gpu::SwapchainFrame acquired = gpu::acquire(commands);
-        check(acquired.render_view && acquired.extent.x == window.extent.x && acquired.extent.y == window.extent.y,
-            "acquire returns an image of the window extent");
+        if (window.extent.x == 0)
+            check(!acquired.render_view && acquired.extent.x == 0 && acquired.extent.y == 0, "acquire returns an empty frame at a zero extent");
+        else
+            check(acquired.render_view && acquired.extent.x == window.extent.x && acquired.extent.y == window.extent.y,
+                "acquire returns an image of the window extent");
         gpu::end_commands(commands);
         if (acquired.render_view)
             gpu::submit_and_present(device, {.commands = {&commands, 1}, .completion = {.semaphore = timeline, .value = frame}});
