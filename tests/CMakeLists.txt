@@ -373,7 +373,7 @@ if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND)
     NoGraphicsAPI_disable_exceptions(test_imgui_backend)
     target_link_libraries(test_imgui_backend PRIVATE NoGraphicsAPI::ImGuiBackend)
     # golden reads golden/imgui_backend.rgba relative to this directory.
-    foreach(imgui_case IN ITEMS init lifecycle shutdown_pending one_frame golden scissor srgb scale sampler user_texture dense_update record_time)
+    foreach(imgui_case IN ITEMS init lifecycle shutdown_pending one_frame golden scissor srgb scale empty_callback sampler user_texture dense_update record_time)
         add_test(NAME test_imgui_backend_${imgui_case} COMMAND test_imgui_backend ${imgui_case} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(test_imgui_backend_${imgui_case} PROPERTIES
             SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
