@@ -241,6 +241,7 @@ The executables are under `build-msvc/examples/<example>/Release` when using the
 - [Public API](include/NoGraphicsAPI/NoGraphicsAPI.hpp)
 - [Metal validation and limitations](docs/metal-validation.md)
 - [Building and integration](docs/building.md)
+- [Dear ImGui renderer backend](docs/imgui.md)
 
 ## License
 

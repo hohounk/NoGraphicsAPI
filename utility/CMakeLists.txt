@@ -91,6 +91,32 @@ set_target_properties(NoGraphicsAPIUtility_utility PROPERTIES EXPORT_NAME utilit
 target_link_libraries(NoGraphicsAPIUtility_utility INTERFACE
     NoGraphicsAPIUtility::math NoGraphicsAPIUtility::allocators NoGraphicsAPIUtility::textures NoGraphicsAPIUtility::uploads)
 
+if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND)
+    if(NOT TARGET ${NOGRAPHICSAPI_IMGUI_TARGET})
+        message(FATAL_ERROR "NOGRAPHICSAPI_BUILD_IMGUI_BACKEND links the imgui target '${NOGRAPHICSAPI_IMGUI_TARGET}', which does not exist. "
+            "Define it before adding NoGraphicsAPI, or set NOGRAPHICSAPI_IMGUI_TARGET.")
+    endif()
+    # Not installed: the backend links the consumer's imgui target, which no export set of this project holds.
+    add_library(NoGraphicsAPI_ImGuiBackend STATIC
+        include/NoGraphicsAPIUtility/imgui_impl_nographicsapi.h
+        src/imgui_impl_nographicsapi.cpp
+        src/imgui_impl_nographicsapi_shared.h
+        src/imgui_impl_nographicsapi_spirv.h
+        src/imgui_impl_nographicsapi.slang
+    )
+    set_source_files_properties(src/imgui_impl_nographicsapi.slang PROPERTIES HEADER_FILE_ONLY TRUE)
+    add_library(NoGraphicsAPI::ImGuiBackend ALIAS NoGraphicsAPI_ImGuiBackend)
+    target_compile_features(NoGraphicsAPI_ImGuiBackend PUBLIC cxx_std_20)
+    target_link_libraries(NoGraphicsAPI_ImGuiBackend PUBLIC NoGraphicsAPIUtility::allocators ${NOGRAPHICSAPI_IMGUI_TARGET}
+        PRIVATE NoGraphicsAPIUtility::types)
+    NoGraphicsAPI_disable_exceptions(NoGraphicsAPI_ImGuiBackend)
+    if(MSVC)
+        target_compile_options(NoGraphicsAPI_ImGuiBackend PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(NoGraphicsAPI_ImGuiBackend PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    endif()
+endif()
+
 install(TARGETS
         NoGraphicsAPIUtility_types
         NoGraphicsAPIUtility_math
