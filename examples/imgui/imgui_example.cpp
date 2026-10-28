@@ -103,7 +103,8 @@ int main()
         }
         if (!running) break;
         // ImGui counts each built frame toward UnusedFrames, so build only a frame that is submitted.
-        const gpu::uint32x2 extent = window_drawable_extent(window);
+        // get_drawable_extent also marks the swapchain for recreation after a resize: Wayland reports no resize through acquire.
+        const gpu::uint32x2 extent = gpu::get_drawable_extent(device);
         if (!extent.x || !extent.y || (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED))
         {
             SDL_Delay(10);
