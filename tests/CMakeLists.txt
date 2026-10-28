@@ -383,3 +383,21 @@ if(NOT APPLE)
     add_test(NAME test_startup_failures_validation_forwarding COMMAND test_startup_failures --validation-forwarding)
     set_tests_properties(test_startup_failures_validation_forwarding PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error")
 endif()
+
+if(NOGRAPHICSAPI_BUILD_IMGUI_BACKEND)
+    add_executable(test_imgui_backend imgui_backend_test.cpp)
+    NoGraphicsAPI_disable_exceptions(test_imgui_backend)
+    target_link_libraries(test_imgui_backend PRIVATE NoGraphicsAPI::ImGuiBackend)
+    # golden reads golden/imgui_backend.rgba relative to this directory.
+    foreach(imgui_case IN ITEMS init lifecycle golden scissor srgb)
+        add_test(NAME test_imgui_backend_${imgui_case} COMMAND test_imgui_backend ${imgui_case} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(test_imgui_backend_${imgui_case} PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error;NoGraphicsAPI validation:")
+    endforeach()
+
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME test_imgui_spirv_embedded
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/write_imgui_spirv.py --check
+            --slangc ${NOGRAPHICSAPI_SLANGC} --spirv-val ${NOGRAPHICSAPI_SPIRV_VAL})
+    set_tests_properties(test_imgui_spirv_embedded PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+endif()
